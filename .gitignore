@@ -1,0 +1,17 @@
+node_modules
+data
+*.log
+*.bak
+.env
+.godot/
+export/
+android/
+builds/
+godot-client/.godot/
+godot-client/export/
+godot-client/android/
+godot-client/builds/
+godot-client/addons/godot_cef/
+session-ses_*
+.claude/
+sugar-rush-clone.backup-20260714-214128/

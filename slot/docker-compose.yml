@@ -1,0 +1,49 @@
+services:
+  casino:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${PUBLISHED_PORT:-3101}:${PORT:-3001}"
+    networks:
+      - default
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
+      - "traefik.http.routers.casino.rule=Host(`casino.retailerway.com`)"
+      - "traefik.http.routers.casino.entrypoints=websecure"
+      - "traefik.http.routers.casino.tls=true"
+      - "traefik.http.routers.casino.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.casino.service=casino"
+      - "traefik.http.routers.casino-ws.rule=Host(`casino.retailerway.com`) && Header(`Upgrade`, `websocket`)"
+      - "traefik.http.routers.casino-ws.entrypoints=web"
+      - "traefik.http.routers.casino-ws.priority=100"
+      - "traefik.http.routers.casino-ws.service=casino"
+      - "traefik.http.routers.casino-http.rule=Host(`casino.retailerway.com`)"
+      - "traefik.http.routers.casino-http.entrypoints=web"
+      - "traefik.http.routers.casino-http.middlewares=casino-https-redirect"
+      - "traefik.http.routers.casino-http.priority=1"
+      - "traefik.http.routers.casino-http.service=casino"
+      - "traefik.http.middlewares.casino-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.services.casino.loadbalancer.server.port=${PORT:-3001}"
+    environment:
+      - NODE_ENV=production
+      - PORT=${PORT:-3001}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+    volumes:
+      - casino-data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:${PORT:-3001}/admin', r => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  casino-data:
+
+networks:
+  dokploy-network:
+    external: true

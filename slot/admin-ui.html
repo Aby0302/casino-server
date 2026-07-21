@@ -1,0 +1,1638 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Casino Yönetim Paneli</title>
+<style>
+  :root {
+    --bg: #0d0817; --panel: #171025; --panel2: #1f1631; --line: #3a2a5e;
+    --text: #e8e2f5; --dim: #9a8fc0; --gold: #e7b53c; --pink: #e05298;
+    --green: #4cc46a; --red: #e05252;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: radial-gradient(circle at 50% -10%, #2b1a4d, var(--bg) 60%); color: var(--text);
+         font: 14px/1.5 system-ui, sans-serif; min-height: 100vh; }
+  header { display: flex; align-items: center; gap: 14px; padding: 14px 22px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 17px; color: var(--gold); letter-spacing: .5px; }
+  header .spacer { flex: 1; }
+  nav { display: flex; gap: 6px; padding: 12px 22px 0; flex-wrap: wrap; }
+  nav button { background: var(--panel); color: var(--dim); border: 1px solid var(--line); border-bottom: none;
+               padding: 9px 18px; border-radius: 9px 9px 0 0; cursor: pointer; font-weight: 600; }
+  nav button.active { background: var(--panel2); color: var(--text); border-color: #5a3fa0; }
+  main { margin: 0 22px 40px; background: var(--panel2); border: 1px solid var(--line); border-radius: 0 10px 10px 10px; padding: 18px; }
+  h2 { font-size: 15px; margin-bottom: 12px; color: var(--gold); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+  input, select, textarea { background: var(--panel); border: 1px solid var(--line); color: var(--text);
+    border-radius: 7px; padding: 7px 9px; font: inherit; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: #7a55d6; }
+  button.act { background: #45306d; border: none; color: #fff; padding: 8px 14px; border-radius: 8px;
+               cursor: pointer; font-weight: 700; }
+  button.act:hover { background: #56408a; }
+  button.gold { background: linear-gradient(#e7b53c, #c8922a); color: #241a05; }
+  button.danger { background: #6b2733; }
+  button.small { padding: 5px 10px; font-size: 12px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+  .muted { color: var(--dim); font-size: 12px; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 99px; font-size: 11px; font-weight: 700; }
+  .pill.on { background: #143d20; color: var(--green); }
+  .pill.off { background: #2c2540; color: var(--dim); }
+  #toast { position: fixed; right: 18px; bottom: 18px; background: #241b3c; border: 1px solid #5a3fa0;
+    padding: 10px 16px; border-radius: 9px; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 50; }
+  #toast.show { opacity: 1; }
+  #toast.err { border-color: var(--red); color: #ffb3b3; }
+  /* login */
+  #login { position: fixed; inset: 0; background: rgba(8,4,18,.93); display: flex; align-items: center;
+    justify-content: center; z-index: 40; }
+  #login .box { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 28px 30px;
+    width: min(92vw, 360px); display: flex; flex-direction: column; gap: 12px; }
+  .machine { border: 1px solid var(--line); border-radius: 10px; margin-bottom: 12px; background: var(--panel); }
+  .machine > .head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; }
+  .machine > .head b { color: var(--pink); }
+  .machine .body { padding: 4px 14px 14px; display: none; }
+  .machine.open .body { display: block; }
+  .grid3 { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+  fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  legend { color: var(--dim); font-size: 11px; padding: 0 6px; text-transform: uppercase; letter-spacing: .5px; }
+  .vec input { width: 66px; }
+  textarea#rawJson { width: 100%; min-height: 320px; font-family: ui-monospace, monospace; font-size: 12px; }
+  .filebar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  progress { width: 180px; }
+  .map-shell { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(340px, .75fr); gap: 14px; align-items: start; }
+  .map3d-card, .map-form-card { border: 1px solid var(--line); border-radius: 12px; background: rgba(13, 8, 23, .45); padding: 12px; }
+  .map3d-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .map3d-toolbar select { min-width: 170px; }
+  .map3d-toolbar .tool.active { background: linear-gradient(#e7b53c, #c8922a); color: #241a05; }
+  .unity-editor { display: grid; grid-template-columns: 210px minmax(0, 1fr) 280px; gap: 10px; align-items: stretch; }
+  .unity-panel { border: 1px solid #4a3675; border-radius: 12px; background: rgba(8, 5, 15, .62); min-height: 430px; overflow: hidden; }
+  .unity-panel h3 { padding: 10px 12px; font-size: 12px; color: var(--gold); border-bottom: 1px solid #4a3675; text-transform: uppercase; letter-spacing: .7px; }
+  #map3dHierarchy { max-height: min(62vh, 650px); overflow: auto; padding: 8px; }
+  .hierarchy-item { width: 100%; text-align: left; border: 1px solid transparent; background: transparent; color: var(--text);
+    border-radius: 8px; padding: 8px 9px; cursor: pointer; display: grid; gap: 2px; }
+  .hierarchy-item:hover { background: rgba(255,255,255,.05); }
+  .hierarchy-item.selected { border-color: var(--gold); background: rgba(231,181,60,.12); }
+  .hierarchy-item.locked { color: #b9afce; }
+  .hierarchy-item.child { margin-left: 14px; width: calc(100% - 14px); }
+  .hierarchy-title { display: flex; gap: 8px; align-items: center; min-width: 0; }
+  .hierarchy-title .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hierarchy-lock { margin-left: auto; cursor: pointer; opacity: .85; }
+  .hierarchy-lock:hover { opacity: 1; }
+  .hierarchy-item small { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .scene-wrap { min-width: 0; }
+  #map3dViewport { position: relative; min-height: 430px; height: min(62vh, 650px); overflow: hidden; border: 1px solid #4a3675;
+    border-radius: 12px; background: radial-gradient(circle at 50% 5%, #27184a, #07050d 68%); }
+  #map3dCanvasHost { position: absolute; inset: 0; }
+  #map3dCanvasHost canvas { width: 100%; height: 100%; display: block; }
+  #map3dStatus { position: absolute; left: 12px; top: 12px; right: 12px; padding: 8px 10px; border-radius: 8px;
+    background: rgba(13, 8, 23, .78); color: var(--dim); font-size: 12px; pointer-events: none; }
+  #map3dStatus.err { color: #ffb3b3; border: 1px solid var(--red); }
+  .map3d-help { margin-top: 8px; color: var(--dim); font-size: 12px; }
+  #map3dInspector { padding: 10px; display: grid; gap: 10px; max-height: min(62vh, 650px); overflow: auto; }
+  #map3dInspector b { color: var(--pink); }
+  .inspector-row { display: grid; gap: 5px; }
+  .inspector-row label { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+  .inspector-row input, .inspector-row select { width: 100%; min-width: 0; }
+  .lock-note { color: var(--dim); font-size: 12px; }
+  .inspect-vec { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+  .inspect-vec span { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 4px; align-items: center; color: var(--dim); }
+  .machine.selected { border-color: var(--gold); box-shadow: 0 0 0 1px rgba(231,181,60,.35); }
+  .map-form-card #machines { max-height: 620px; overflow: auto; padding-right: 4px; }
+  @media (max-width: 1180px) {
+    .unity-editor { grid-template-columns: 1fr; }
+    .unity-panel { min-height: auto; }
+    #map3dHierarchy, #map3dInspector { max-height: 260px; }
+  }
+  @media (max-width: 980px) {
+    .map-shell { grid-template-columns: 1fr; }
+    #map3dViewport { min-height: 360px; height: 52vh; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎰 Casino Yönetim Paneli</h1>
+  <span class="muted" id="statusLine"></span>
+  <span class="spacer"></span>
+  <button class="act small" id="logoutBtn" style="display:none">Çıkış</button>
+</header>
+
+<nav>
+  <button data-tab="players" class="active">Oyuncular</button>
+  <button data-tab="files">Dosyalar</button>
+  <button data-tab="map">Map Editör</button>
+  <button data-tab="status">Durum</button>
+</nav>
+
+<main>
+  <!-- Oyuncular -->
+  <section id="tab-players">
+    <h2>Oyuncu Kayıtları</h2>
+    <div class="row">
+      <input id="npId" placeholder="oyuncu ID (örn. unity-player)" style="width:220px">
+      <input id="npName" placeholder="isim" style="width:160px">
+      <input id="npBalance" type="number" value="10000" style="width:110px">
+      <button class="act gold" id="npAdd">Oyuncu Ekle</button>
+    </div>
+    <table>
+      <thead><tr><th>ID</th><th>İsim</th><th>Bakiye</th><th>Durum</th><th>Kayıt</th><th></th></tr></thead>
+      <tbody id="playersBody"></tbody>
+    </table>
+    <p class="muted" style="margin-top:10px">Kayıtlı oyuncuların bakiyesi sunucu yeniden başlasa da korunur.
+      Unity istemcisi hangi <code>sessionID</code> ile bağlanıyorsa o ID'yi kaydedin.</p>
+  </section>
+
+  <!-- Dosyalar -->
+  <section id="tab-files" style="display:none">
+    <h2>Dosya Yöneticisi</h2>
+    <div class="filebar">
+      <select id="fileDir">
+        <option value="models">models/ (3D modeller)</option>
+        <option value="maps">maps/ (haritalar)</option>
+        <option value="audio">audio/ (sesler)</option>
+        <option value="hotfix">hotfix/ (hot-update DLL)</option>
+        <option value="hotfix/aot">hotfix/aot/ (AOT metadata)</option>
+      </select>
+      <input type="file" id="fileInput">
+      <button class="act gold" id="uploadBtn">Yükle</button>
+      <progress id="uploadProg" value="0" max="100" style="display:none"></progress>
+    </div>
+    <table>
+      <thead><tr><th>Dosya</th><th>Boyut</th><th>Değişme</th><th></th></tr></thead>
+      <tbody id="filesBody"></tbody>
+    </table>
+  </section>
+
+  <!-- Map Editör -->
+  <section id="tab-map" style="display:none">
+    <h2>Map Editörü <span class="muted">(casino-config.json — Unity lobisi bir sonraki yüklemede alır)</span></h2>
+    <div class="row">
+      <button class="act gold" id="cfgSave">Kaydet</button>
+      <button class="act" id="cfgReload">Yeniden Yükle</button>
+      <button class="act" id="cfgAddMachine">+ Makine Ekle</button>
+      <button class="act" id="godotEditorOpen">Godot Web Editor Aç</button>
+      <label class="muted"><input type="checkbox" id="rawToggle"> Ham JSON</label>
+    </div>
+    <div id="formView">
+      <div class="map-shell">
+        <div class="map3d-card">
+          <div class="map3d-toolbar">
+            <label>Seçili makine <select id="map3dMachineSelect"></select></label>
+            <button class="act small tool active" data-map3d-tool="translate">W Taşı</button>
+            <button class="act small tool" data-map3d-tool="rotate">E Döndür</button>
+            <button class="act small tool" data-map3d-tool="scale">R Ölçek</button>
+            <button class="act small" id="map3dFocus">Seçilene Git</button>
+            <button class="act small" id="map3dResetCamera">Kamera Sıfırla</button>
+            <button class="act small" id="map3dDuplicate">Çoğalt</button>
+            <button class="act small danger" id="map3dDelete">Sil</button>
+            <label class="muted"><input type="checkbox" id="map3dSnap" checked> Snap</label>
+            <input id="map3dSnapValue" type="number" value="10" step="1" style="width:70px" title="Taşıma snap değeri">
+          </div>
+          <div class="unity-editor">
+            <aside class="unity-panel">
+              <h3>Hierarchy</h3>
+              <div id="map3dHierarchy"></div>
+            </aside>
+            <div class="scene-wrap">
+              <div id="map3dViewport">
+                <div id="map3dCanvasHost"></div>
+                <div id="map3dStatus">3D editör yükleniyor...</div>
+              </div>
+              <div class="map3d-help">Unity kısayolları: W taşı, E döndür, R ölçek, F odak, Delete sil, Ctrl+D çoğalt. Hierarchy'den makine, spawn veya alt nesne seçip gizmo eksenlerinden düzenle.</div>
+            </div>
+            <aside class="unity-panel">
+              <h3>Inspector</h3>
+              <div id="map3dInspector" class="muted"></div>
+            </aside>
+          </div>
+        </div>
+        <div class="map-form-card">
+          <fieldset style="margin-bottom:12px">
+            <legend>Genel</legend>
+            <div class="row">
+              <label>Harita <select id="cfgMap"></select></label>
+              <label class="vec">Spawn <span id="cfgSpawnPos"></span></label>
+              <label class="vec">Bakış <span id="cfgSpawnLook"></span></label>
+            </div>
+          </fieldset>
+          <div id="machines"></div>
+        </div>
+      </div>
+    </div>
+    <div id="rawView" style="display:none">
+      <textarea id="rawJson" spellcheck="false"></textarea>
+    </div>
+  </section>
+
+  <!-- Durum -->
+  <section id="tab-status" style="display:none">
+    <h2>Sunucu Durumu</h2>
+    <div id="statusInfo" class="muted">-</div>
+    <h2 style="margin-top:16px">Aktif Cüzdanlar</h2>
+    <table><thead><tr><th>Session</th><th>Bakiye</th><th>Kayıtlı mı</th></tr></thead><tbody id="walletsBody"></tbody></table>
+    <h2 style="margin-top:16px">Cloud Stream Oturumları</h2>
+    <table><thead><tr><th>ID</th><th>Session</th><th>Oyun</th><th>Boyut</th><th>Son Erişim</th></tr></thead><tbody id="cloudBody"></tbody></table>
+  </section>
+</main>
+
+<div id="login">
+  <div class="box">
+    <h2>Yönetici Girişi</h2>
+    <input id="loginPass" type="password" placeholder="Parola" autofocus>
+    <button class="act gold" id="loginBtn">Giriş</button>
+    <span class="muted" id="loginMsg"></span>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+const $ = sel => document.querySelector(sel);
+let config = null;
+let selectedMachineIndex = 0;
+let selectedObjectKey = 'machine:0';
+let threeBoot = null;
+const map3d = {
+  THREE: null, GLTFLoader: null, OrbitControls: null,
+  TransformControls: null,
+  scene: null, camera: null, renderer: null, controls: null, loader: null,
+  transformControls: null, transformMode: 'translate', suppressTransformSync: false,
+  raycaster: null, pointer: null, dragPlane: null, dragOffset: null,
+  machineGroups: [], mapObject: null, spawnGroup: null, editRoot: null, grid: null,
+  editObjects: new Map(),
+  modelCache: new Map(), dragging: false, raf: 0, resizeObserver: null,
+};
+
+function toast(msg, isErr) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.className = 'show' + (isErr ? ' err' : '');
+  setTimeout(() => el.className = '', 2600);
+}
+
+async function api(url, opts = {}) {
+  const res = await fetch(url, { credentials: 'same-origin', ...opts });
+  if (res.status === 401) { $('#login').style.display = 'flex'; throw new Error('Giriş gerekli'); }
+  const body = await res.json();
+  if (!body.ok) throw new Error(body.error || 'İstek başarısız');
+  return body;
+}
+
+// ── Giriş ──
+async function tryLogin() {
+  $('#loginMsg').textContent = '...';
+  try {
+    const res = await fetch('/admin/api/login', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: $('#loginPass').value }),
+    });
+    const body = await res.json();
+    if (!body.ok) { $('#loginMsg').textContent = body.error || 'Hata'; return; }
+    $('#login').style.display = 'none';
+    $('#logoutBtn').style.display = '';
+    refreshAll();
+  } catch (e) { $('#loginMsg').textContent = e.message; }
+}
+$('#loginBtn').onclick = tryLogin;
+$('#loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') tryLogin(); });
+$('#logoutBtn').onclick = async () => {
+  await fetch('/admin/api/logout', { method: 'POST', credentials: 'same-origin' });
+  location.reload();
+};
+
+// ── Sekmeler ──
+document.querySelectorAll('nav button').forEach(btn => btn.onclick = () => {
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b === btn));
+  document.querySelectorAll('main > section').forEach(s => s.style.display = 'none');
+  $('#tab-' + btn.dataset.tab).style.display = '';
+  if (btn.dataset.tab === 'players') loadPlayers();
+  if (btn.dataset.tab === 'files') loadFiles();
+  if (btn.dataset.tab === 'map') loadConfig();
+  if (btn.dataset.tab === 'status') loadStatus();
+});
+
+// ── Oyuncular ──
+async function loadPlayers() {
+  const { players } = await api('/admin/api/players');
+  $('#playersBody').innerHTML = players.map(p => `
+    <tr>
+      <td><code>${esc(p.id)}</code></td>
+      <td><input value="${esc(p.name)}" data-name="${esc(p.id)}" style="width:130px"></td>
+      <td><input type="number" value="${p.balance}" data-bal="${esc(p.id)}" style="width:110px"></td>
+      <td>${p.online ? '<span class="pill on">aktif</span>' : '<span class="pill off">pasif</span>'}</td>
+      <td class="muted">${(p.createdAt || '').slice(0, 10)}</td>
+      <td>
+        <button class="act small" data-save="${esc(p.id)}">Kaydet</button>
+        <button class="act small danger" data-del="${esc(p.id)}">Sil</button>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="6" class="muted">Kayıtlı oyuncu yok</td></tr>';
+
+  document.querySelectorAll('[data-save]').forEach(b => b.onclick = async () => {
+    const id = b.dataset.save;
+    await api('/admin/api/players/' + encodeURIComponent(id), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: document.querySelector(`[data-name="${CSS.escape(id)}"]`).value,
+        balance: Number(document.querySelector(`[data-bal="${CSS.escape(id)}"]`).value),
+      }),
+    });
+    toast('Oyuncu güncellendi'); loadPlayers();
+  });
+  document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+    if (!confirm(`${b.dataset.del} silinsin mi?`)) return;
+    await api('/admin/api/players/' + encodeURIComponent(b.dataset.del), { method: 'DELETE' });
+    toast('Oyuncu silindi'); loadPlayers();
+  });
+}
+$('#npAdd').onclick = async () => {
+  try {
+    await api('/admin/api/players', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: $('#npId').value, name: $('#npName').value, balance: Number($('#npBalance').value) }),
+    });
+    $('#npId').value = ''; $('#npName').value = '';
+    toast('Oyuncu eklendi'); loadPlayers();
+  } catch (e) { toast(e.message, true); }
+};
+
+// ── Dosyalar ──
+async function loadFiles() {
+  const dir = $('#fileDir').value;
+  const { files } = await api('/admin/api/files?dir=' + encodeURIComponent(dir));
+  $('#filesBody').innerHTML = files.map(f => `
+    <tr>
+      <td>${esc(f.name)}</td>
+      <td class="muted">${fmtSize(f.size)}</td>
+      <td class="muted">${f.mtime.replace('T', ' ').slice(0, 16)}</td>
+      <td><button class="act small danger" data-fdel="${esc(f.name)}">Sil</button></td>
+    </tr>`).join('') || '<tr><td colspan="4" class="muted">Klasör boş</td></tr>';
+  document.querySelectorAll('[data-fdel]').forEach(b => b.onclick = async () => {
+    if (!confirm(`${b.dataset.fdel} silinsin mi?`)) return;
+    await api(`/admin/api/files?dir=${encodeURIComponent(dir)}&name=${encodeURIComponent(b.dataset.fdel)}`, { method: 'DELETE' });
+    toast('Dosya silindi'); loadFiles();
+  });
+}
+$('#fileDir').onchange = loadFiles;
+$('#uploadBtn').onclick = () => {
+  const file = $('#fileInput').files[0];
+  if (!file) { toast('Önce dosya seçin', true); return; }
+  const dir = $('#fileDir').value;
+  const xhr = new XMLHttpRequest();
+  const prog = $('#uploadProg');
+  prog.style.display = ''; prog.value = 0;
+  xhr.upload.onprogress = e => { if (e.lengthComputable) prog.value = (e.loaded / e.total) * 100; };
+  xhr.onload = () => {
+    prog.style.display = 'none';
+    try {
+      const body = JSON.parse(xhr.responseText);
+      if (body.ok) { toast('Yüklendi: ' + file.name); loadFiles(); }
+      else toast(body.error || 'Yükleme hatası', true);
+    } catch (e) { toast('Yükleme hatası', true); }
+  };
+  xhr.onerror = () => { prog.style.display = 'none'; toast('Yükleme hatası', true); };
+  xhr.open('POST', `/admin/api/files/upload?dir=${encodeURIComponent(dir)}&name=${encodeURIComponent(file.name)}`);
+  xhr.send(file);
+};
+
+// ── Map Editörü ──
+const MACHINE_TEMPLATE = () => ({
+  id: 'slot_' + String(Date.now()).slice(-4), type: 'slot',
+  model: 'slot-machine-1.glb', audio: 'slot-machine-1.mp3', game: 'sugar-rush',
+  position: [0, 0, 0], rotation: [0, 0, 0], scale: [0.06, 0.06, 0.06], interactionRadius: 80,
+  seat: { position: [0, 0, 0], size: [44, 44, 44], shape: 'sphere' },
+  screen: { position: [0, 80, 655], rotation: [0, 0, 0], size: [360, 260, 20] },
+  spinButton: { position: [160, -120, 660], rotation: [20, 0, 0], size: [44, 10, 44], shape: 'cylinder' },
+  lever: { position: [290, 0, 520], rotation: [0, 0, 0], size: [32, 66, 32], shape: 'cylinder' },
+});
+
+const SPAWN_POSITION_KEY = 'spawn:position';
+const SPAWN_LOOK_KEY = 'spawn:lookAt';
+const EDIT_PARTS = {
+  seat: { label: 'Koltuk', path: 'seat', positionKey: 'position', sizeKey: 'size', shapeKey: 'shape', color: 0x4cc46a },
+  screen: { label: 'Ekran', path: 'screen', positionKey: 'position', rotationKey: 'rotation', sizeKey: 'size', color: 0xe05298 },
+  spinButton: { label: 'Spin Butonu', path: 'spinButton', positionKey: 'position', rotationKey: 'rotation', sizeKey: 'size', shapeKey: 'shape', color: 0xe7b53c },
+  lever: { label: 'Lever', path: 'lever', positionKey: 'position', rotationKey: 'rotation', sizeKey: 'size', shapeKey: 'shape', color: 0x9c7cff },
+};
+
+function machineKey(idx) { return 'machine:' + idx; }
+function machinePartKey(idx, part) { return `machine:${idx}:${part}`; }
+
+function getConfigTarget(key = selectedObjectKey) {
+  if (!config) return null;
+  config.spawn = config.spawn || { position: [0, 0, 0], lookAt: [0, 0, 0] };
+  if (key === SPAWN_POSITION_KEY) {
+    return { key, kind: 'spawnPosition', label: 'Spawn Pozisyonu', object: config.spawn, positionKey: 'position', lockKey: 'positionLocked' };
+  }
+  if (key === SPAWN_LOOK_KEY) {
+    return { key, kind: 'spawnLookAt', label: 'Spawn Bakış Noktası', object: config.spawn, positionKey: 'lookAt', lockKey: 'lookAtLocked' };
+  }
+  const match = String(key || '').match(/^machine:(\d+)(?::([a-zA-Z0-9_]+))?$/);
+  if (!match || !Array.isArray(config.machines)) return null;
+  const idx = Number(match[1]);
+  const machine = config.machines[idx];
+  if (!machine) return null;
+  if (!match[2]) {
+    return {
+      key: machineKey(idx), kind: 'machine', label: machine.id || ('Makine ' + (idx + 1)),
+      object: machine, machineIndex: idx, positionKey: 'position', rotationKey: 'rotation', scaleKey: 'scale',
+    };
+  }
+  const part = match[2];
+  const info = EDIT_PARTS[part];
+  if (!info) return null;
+  machine[info.path] = machine[info.path] || {};
+  return {
+    key: machinePartKey(idx, part), kind: 'part', part, label: info.label,
+    object: machine[info.path], machine, machineIndex: idx, ...info,
+  };
+}
+
+function normalizeSelectedObjectKey() {
+  if (getConfigTarget(selectedObjectKey)) return selectedObjectKey;
+  if (config && config.machines && config.machines[selectedMachineIndex]) return machineKey(selectedMachineIndex);
+  if (config && config.spawn) return SPAWN_POSITION_KEY;
+  return selectedObjectKey;
+}
+
+function targetSupportsMode(target, mode) {
+  if (!target) return false;
+  if (mode === 'translate') return Boolean(target.positionKey);
+  if (mode === 'rotate') return Boolean(target.rotationKey);
+  if (mode === 'scale') return Boolean(target.scaleKey || target.sizeKey || target.radiusKey);
+  return false;
+}
+
+function targetLockKey(target) { return target && target.lockKey ? target.lockKey : 'locked'; }
+
+function isTargetLocked(targetOrKey = selectedObjectKey) {
+  const target = typeof targetOrKey === 'string' ? getConfigTarget(targetOrKey) : targetOrKey;
+  return Boolean(target && target.object && target.object[targetLockKey(target)]);
+}
+
+function setTargetLocked(targetOrKey, locked) {
+  const target = typeof targetOrKey === 'string' ? getConfigTarget(targetOrKey) : targetOrKey;
+  if (!target || !target.object) return;
+  if (locked) target.object[targetLockKey(target)] = true;
+  else delete target.object[targetLockKey(target)];
+}
+
+function toggleTargetLock(key) {
+  const target = getConfigTarget(key);
+  if (!target) return;
+  selectedObjectKey = target.key;
+  if (Number.isInteger(target.machineIndex)) selectedMachineIndex = target.machineIndex;
+  const locked = !isTargetLocked(target);
+  setTargetLocked(target, locked);
+  if (locked && map3d.transformControls) map3d.transformControls.detach();
+  syncRaw();
+  renderConfig({ rebuild3d: false });
+  toast((locked ? 'Kilitlendi: ' : 'Kilit açıldı: ') + target.label);
+}
+
+async function loadConfig() {
+  const res = await api('/admin/api/config');
+  config = res.config;
+  const [models, maps, audio] = await Promise.all(
+    ['models', 'maps', 'audio'].map(d => api('/admin/api/files?dir=' + d).then(r => r.files.map(f => f.name))));
+  config.__lists = { models, maps, audio };
+  renderConfig();
+}
+
+function vecInputs(container, arr, len, disabled = false) {
+  container.innerHTML = '';
+  for (let i = 0; i < len; i++) {
+    const inp = document.createElement('input');
+    inp.type = 'number'; inp.step = 'any'; inp.value = (arr && arr[i]) ?? 0;
+    inp.disabled = disabled;
+    inp.oninput = () => { if (disabled) return; arr[i] = Number(inp.value) || 0; markConfigChanged(); };
+    container.appendChild(inp);
+  }
+}
+
+function selectInput(options, current, onChange, rebuild3d = false, emptyLabel = '', disabled = false) {
+  const sel = document.createElement('select');
+  sel.disabled = disabled;
+  if (emptyLabel) {
+    const opt = document.createElement('option');
+    opt.value = ''; opt.textContent = emptyLabel; opt.selected = !current;
+    sel.appendChild(opt);
+  }
+  const names = [...new Set([current, ...options].filter(Boolean))];
+  for (const name of names) {
+    const opt = document.createElement('option');
+    opt.value = name; opt.textContent = name; opt.selected = name === current;
+    sel.appendChild(opt);
+  }
+  sel.onchange = () => { if (disabled) return; onChange(sel.value); markConfigChanged({ rebuild3d }); };
+  return sel;
+}
+
+function renderConfig(opts = {}) {
+  const rebuild3d = opts.rebuild3d !== false;
+  const lists = config.__lists || { models: [], maps: [], audio: [] };
+  config.machines = Array.isArray(config.machines) ? config.machines : [];
+  if (selectedMachineIndex >= config.machines.length) selectedMachineIndex = Math.max(0, config.machines.length - 1);
+  selectedObjectKey = normalizeSelectedObjectKey();
+
+  const mapSel = selectInput(lists.maps.filter(n => n.endsWith('.glb')), config.map, v => config.map = v, true);
+  $('#cfgMap').replaceWith(mapSel); mapSel.id = 'cfgMap';
+
+  config.spawn = config.spawn || { position: [0, 0, 0], lookAt: [0, 0, 0] };
+  $('#cfgSpawnPos').className = 'vec'; $('#cfgSpawnLook').className = 'vec';
+  vecInputs($('#cfgSpawnPos'), config.spawn.position, 3, isTargetLocked(SPAWN_POSITION_KEY));
+  vecInputs($('#cfgSpawnLook'), config.spawn.lookAt, 3, isTargetLocked(SPAWN_LOOK_KEY));
+
+  const host = $('#machines');
+  host.innerHTML = '';
+  config.machines.forEach((m, idx) => {
+    const machineLocked = isTargetLocked(machineKey(idx));
+    const card = document.createElement('div');
+    card.className = 'machine' + (idx === selectedMachineIndex ? ' open selected' : '');
+    const head = document.createElement('div');
+    head.className = 'head';
+    head.innerHTML = `<b>${esc(m.id)}</b> <span class="muted">${esc(m.game || '')} · ${esc(m.model || '')}</span><span style="flex:1"></span>`;
+    const delBtn = document.createElement('button');
+    delBtn.className = 'act small danger'; delBtn.textContent = 'Sil';
+    delBtn.disabled = machineLocked;
+    delBtn.onclick = e => {
+      e.stopPropagation();
+      if (machineLocked) { toast('Makine kilitli; önce kilidi açın', true); return; }
+      if (confirm(m.id + ' silinsin mi?')) { config.machines.splice(idx, 1); renderConfig(); }
+    };
+    head.appendChild(delBtn);
+    head.onclick = () => { setSelectedMachine(idx, { focus: true }); card.classList.toggle('open'); };
+    card.appendChild(head);
+
+    const body = document.createElement('div');
+    body.className = 'body';
+    card.appendChild(body);
+
+    const top = document.createElement('div');
+    top.className = 'row';
+    top.append('ID: ');
+    const idInp = document.createElement('input');
+    idInp.value = m.id; idInp.style.width = '120px';
+    idInp.disabled = machineLocked;
+    idInp.oninput = () => { if (machineLocked) return; m.id = idInp.value; markConfigChanged(); };
+    top.appendChild(idInp);
+    top.append(' Oyun: ');
+    top.appendChild(selectInput(['slot', 'sugar-rush'], m.game || 'sugar-rush', v => m.game = v, false, '', machineLocked));
+    top.append(' Model: ');
+    top.appendChild(selectInput(lists.models, m.model, v => m.model = v, true, '', machineLocked));
+    top.append(' Ses: ');
+    top.appendChild(selectInput(lists.audio, m.audio || '', v => m.audio = v, false, 'Ses yok', machineLocked));
+    top.append(' Etkileşim yarıçapı: ');
+    const irInp = document.createElement('input');
+    irInp.type = 'number'; irInp.value = m.interactionRadius ?? 80; irInp.style.width = '80px';
+    irInp.disabled = machineLocked;
+    irInp.oninput = () => { if (machineLocked) return; m.interactionRadius = Number(irInp.value) || 0; markConfigChanged(); };
+    top.appendChild(irInp);
+    body.appendChild(top);
+
+    const grid = document.createElement('div');
+    grid.className = 'grid3';
+    grid.appendChild(vecFieldset('Pozisyon', m, 'position', 3, machineLocked));
+    grid.appendChild(vecFieldset('Rotasyon', m, 'rotation', 3, machineLocked));
+    grid.appendChild(vecFieldset('Ölçek', m, 'scale', 3, machineLocked));
+    m.seat = m.seat || {};
+    if (m.seat.size == null) m.seat.size = [44, 44, 44];
+    const seatLocked = isTargetLocked(machinePartKey(idx, 'seat'));
+    grid.appendChild(vecFieldset('Koltuk pozisyonu', m.seat, 'position', 3, seatLocked));
+    grid.appendChild(vecFieldset('Koltuk boyutu', m.seat, 'size', 3, seatLocked));
+    m.screen = m.screen || {};
+    const screenLocked = isTargetLocked(machinePartKey(idx, 'screen'));
+    grid.appendChild(vecFieldset('Ekran pozisyonu', m.screen, 'position', 3, screenLocked));
+    grid.appendChild(vecFieldset('Ekran rotasyonu', m.screen, 'rotation', 3, screenLocked));
+    grid.appendChild(vecFieldset('Ekran boyutu', m.screen, 'size', 3, screenLocked));
+    m.spinButton = m.spinButton || {};
+    if (m.spinButton.radius != null && m.spinButton.size == null) {
+      const r = Number(m.spinButton.radius) || 1;
+      m.spinButton.size = [r * 2, r * 2, r * 2];
+      delete m.spinButton.radius;
+    }
+    const spinButtonLocked = isTargetLocked(machinePartKey(idx, 'spinButton'));
+    grid.appendChild(vecFieldset('Spin buton poz.', m.spinButton, 'position', 3, spinButtonLocked));
+    grid.appendChild(vecFieldset('Spin buton rot.', m.spinButton, 'rotation', 3, spinButtonLocked));
+    grid.appendChild(vecFieldset('Spin buton boyut', m.spinButton, 'size', 3, spinButtonLocked));
+    m.lever = m.lever || {};
+    if (m.lever.radius != null && m.lever.size == null) {
+      const r = Number(m.lever.radius) || 1;
+      m.lever.size = [r * 2, r * 2, r * 2];
+      delete m.lever.radius;
+    }
+    const leverLocked = isTargetLocked(machinePartKey(idx, 'lever'));
+    grid.appendChild(vecFieldset('Lever poz.', m.lever, 'position', 3, leverLocked));
+    grid.appendChild(vecFieldset('Lever rot.', m.lever, 'rotation', 3, leverLocked));
+    grid.appendChild(vecFieldset('Lever boyut', m.lever, 'size', 3, leverLocked));
+    body.appendChild(grid);
+
+    host.appendChild(card);
+  });
+  syncRaw();
+  refreshMachinePicker();
+  refreshHierarchy();
+  update3DInspector();
+  if (rebuild3d) ensure3DEditor().then(() => rebuild3DScene()).catch(show3DError);
+  else update3DTransforms();
+}
+
+function vecFieldset(label, obj, key, len, disabled = false) {
+  obj[key] = Array.isArray(obj[key]) ? obj[key] : Array(len).fill(0);
+  const fs = document.createElement('fieldset');
+  fs.innerHTML = `<legend>${label}</legend>`;
+  const holder = document.createElement('div');
+  holder.className = 'vec';
+  vecInputs(holder, obj[key], len, disabled);
+  fs.appendChild(holder);
+  return fs;
+}
+
+function scalarFieldset(label, obj, key, disabled = false) {
+  const fs = document.createElement('fieldset');
+  fs.innerHTML = `<legend>${label}</legend>`;
+  const inp = document.createElement('input');
+  inp.type = 'number'; inp.step = 'any'; inp.value = obj[key] ?? 0; inp.style.width = '90px';
+  inp.disabled = disabled;
+  inp.oninput = () => { if (disabled) return; obj[key] = Number(inp.value) || 0; markConfigChanged(); };
+  fs.appendChild(inp);
+  return fs;
+}
+
+function syncRaw() {
+  if (!config) return;
+  const clean = JSON.parse(JSON.stringify(config));
+  delete clean.__lists;
+  $('#rawJson').value = JSON.stringify(clean, null, 2);
+}
+
+function markConfigChanged(opts = {}) {
+  syncRaw();
+  refreshMachinePicker();
+  refreshHierarchy();
+  update3DInspector();
+  if (opts.rebuild3d) rebuild3DScene();
+  else update3DTransforms(opts);
+}
+
+function refreshMachinePicker() {
+  const sel = $('#map3dMachineSelect');
+  if (!sel || !config) return;
+  const current = String(selectedMachineIndex);
+  sel.innerHTML = (config.machines || []).map((m, idx) =>
+    `<option value="${idx}" ${String(idx) === current ? 'selected' : ''}>${esc(m.id || ('Makine ' + (idx + 1)))}</option>`
+  ).join('') || '<option value="-1">Makine yok</option>';
+}
+
+function setSelectedMachine(idx, opts = {}) {
+  if (!config || !config.machines || !config.machines.length) {
+    selectedMachineIndex = -1;
+    setSelectedObject(SPAWN_POSITION_KEY, opts);
+    return;
+  }
+  selectedMachineIndex = Math.max(0, Math.min(Number(idx) || 0, config.machines.length - 1));
+  setSelectedObject(machineKey(selectedMachineIndex), opts);
+}
+
+function setSelectedObject(key, opts = {}) {
+  let target = getConfigTarget(key);
+  if (!target) {
+    selectedObjectKey = normalizeSelectedObjectKey();
+    target = getConfigTarget(selectedObjectKey);
+  }
+  if (!target) return;
+  selectedObjectKey = target.key;
+  if (Number.isInteger(target.machineIndex)) selectedMachineIndex = target.machineIndex;
+  if (!targetSupportsMode(target, map3d.transformMode)) setTransformMode('translate');
+  refreshMachinePicker();
+  refreshHierarchy();
+  update3DSelection();
+  update3DInspector();
+  document.querySelectorAll('.machine').forEach((card, i) => card.classList.toggle('selected', i === selectedMachineIndex));
+  attachTransformControl();
+  if (opts.focus) focusSelectedMachine();
+}
+
+function refreshHierarchy() {
+  const host = $('#map3dHierarchy');
+  if (!host || !config) return;
+  const button = (key, title, small, child = false) => {
+    const target = getConfigTarget(key);
+    const locked = isTargetLocked(target);
+    return `
+    <button class="hierarchy-item ${child ? 'child ' : ''}${key === selectedObjectKey ? 'selected ' : ''}${locked ? 'locked' : ''}" data-edit-key="${esc(key)}">
+      <span class="hierarchy-title"><span class="name">${esc(title)}</span><span class="hierarchy-lock" role="button" tabindex="0" title="${locked ? 'Kilidi aç' : 'Kilitle'}" data-lock-key="${esc(key)}">${locked ? '🔒' : '🔓'}</span></span>
+      <small>${esc(small || '')}</small>
+    </button>`;
+  };
+  const rows = [
+    button(SPAWN_POSITION_KEY, '◎ Spawn pozisyonu', 'config.spawn.position'),
+    button(SPAWN_LOOK_KEY, '⌖ Spawn bakış noktası', 'config.spawn.lookAt'),
+  ];
+  (config.machines || []).forEach((m, idx) => {
+    rows.push(button(machineKey(idx), '▣ ' + (m.id || ('Makine ' + (idx + 1))), `${m.game || 'oyun yok'} · ${m.model || 'model yok'}`));
+    Object.keys(EDIT_PARTS).forEach(part => rows.push(button(machinePartKey(idx, part), EDIT_PARTS[part].label, `${m.id || ('Makine ' + (idx + 1))}.${part}`, true)));
+  });
+  host.innerHTML = rows.join('') || '<div class="muted" style="padding:8px">Sahnede nesne yok.</div>';
+  host.querySelectorAll('[data-edit-key]').forEach(btn => {
+    btn.onclick = e => {
+      if (e.target.closest('[data-lock-key]')) return;
+      setSelectedObject(btn.dataset.editKey, { focus: true });
+    };
+  });
+  host.querySelectorAll('[data-lock-key]').forEach(btn => {
+    btn.onclick = e => { e.stopPropagation(); toggleTargetLock(btn.dataset.lockKey); };
+    btn.onkeydown = e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toggleTargetLock(btn.dataset.lockKey); }
+    };
+  });
+}
+
+function update3DInspector() {
+  const host = $('#map3dInspector');
+  if (!host || !config) return;
+  const target = getConfigTarget(selectedObjectKey);
+  if (!target) {
+    host.innerHTML = 'Nesne yok. + Makine Ekle ile sahneye yeni makine koyun.';
+    return;
+  }
+  const lists = config.__lists || { models: [], audio: [] };
+  host.innerHTML = '';
+  const title = document.createElement('div');
+  if (target.kind === 'spawnPosition' || target.kind === 'spawnLookAt') {
+    title.innerHTML = `<b>${esc(target.label)}</b><div class="muted">Spawn noktası ve bakış hedefi</div>`;
+    host.appendChild(title);
+    inspectorLockRow(host, target);
+    inspectorVecRow(host, 'Position', config.spawn, 'position', 3, isTargetLocked(SPAWN_POSITION_KEY));
+    inspectorVecRow(host, 'Look At', config.spawn, 'lookAt', 3, isTargetLocked(SPAWN_LOOK_KEY));
+    return;
+  }
+
+  const m = target.kind === 'part' ? target.machine : target.object;
+  if (target.kind === 'part') {
+    const locked = isTargetLocked(target);
+    title.innerHTML = `<b>${esc(target.label)}</b><div class="muted">${esc(m.id || 'Makine')} alt nesnesi</div>`;
+    host.appendChild(title);
+    inspectorLockRow(host, target);
+    if (target.positionKey) inspectorVecRow(host, 'Position', target.object, target.positionKey, 3, locked);
+    if (target.rotationKey) inspectorVecRow(host, 'Rotation', target.object, target.rotationKey, 3, locked);
+    if (target.sizeKey) inspectorVecRow(host, 'Size', target.object, target.sizeKey, 3, locked);
+    if (target.shapeKey) {
+      const currentShape = target.object[target.shapeKey] || 'cylinder';
+      inspectorSelectRow(host, 'Shape', ['box', 'sphere', 'cylinder', 'cone', 'torus'], currentShape,
+        value => { target.object[target.shapeKey] = value; markConfigChanged({ rebuildPart: true }); }, '', locked);
+    }
+    return;
+  }
+
+  const locked = isTargetLocked(target);
+  title.innerHTML = `<b>${esc(m.id || 'Makine')}</b><div class="muted">${esc(m.game || '')} · ${esc(m.model || '')}</div>`;
+  host.appendChild(title);
+  inspectorLockRow(host, target);
+  inspectorTextRow(host, 'ID', m.id || '', value => { m.id = value; syncRaw(); refreshMachinePicker(); refreshHierarchy(); }, locked);
+  inspectorSelectRow(host, 'Oyun', ['slot', 'sugar-rush'], m.game || 'sugar-rush', value => { m.game = value; syncRaw(); refreshHierarchy(); }, '', locked);
+  inspectorSelectRow(host, 'Model', lists.models, m.model || '', value => { m.model = value; syncRaw(); refreshHierarchy(); rebuild3DScene(); }, '', locked);
+  inspectorSelectRow(host, 'Ses', lists.audio, m.audio || '', value => { m.audio = value; syncRaw(); refreshHierarchy(); }, 'Ses yok', locked);
+  inspectorVecRow(host, 'Position', m, 'position', 3, locked);
+  inspectorVecRow(host, 'Rotation', m, 'rotation', 3, locked);
+  inspectorVecRow(host, 'Scale', m, 'scale', 3, locked);
+  inspectorNumberRow(host, 'Interaction Radius', m.interactionRadius ?? 80, value => { m.interactionRadius = value; syncRaw(); }, locked);
+}
+
+function inspectorLockRow(host, target) {
+  const locked = isTargetLocked(target);
+  const row = inspectorRow('Kilit');
+  const btn = document.createElement('button');
+  btn.className = 'act small' + (locked ? ' danger' : '');
+  btn.textContent = locked ? '🔒 Kilitli' : '🔓 Kilitle';
+  btn.onclick = () => toggleTargetLock(target.key);
+  const note = document.createElement('div');
+  note.className = 'lock-note';
+  note.textContent = locked ? 'Kilitli: gizmo ve bu nesnenin düzenleme alanları kapalı.' : 'Kilitlersen gizmo ve bu nesnenin düzenleme alanları kapanır.';
+  row.append(btn, note);
+  host.appendChild(row);
+}
+
+function inspectorTextRow(host, label, value, onInput, disabled = false) {
+  const row = inspectorRow(label);
+  const inp = document.createElement('input');
+  inp.value = value;
+  inp.disabled = disabled;
+  inp.oninput = () => { if (disabled) return; onInput(inp.value); };
+  row.appendChild(inp);
+  host.appendChild(row);
+}
+
+function inspectorNumberRow(host, label, value, onInput, disabled = false) {
+  const row = inspectorRow(label);
+  const inp = document.createElement('input');
+  inp.type = 'number'; inp.step = 'any'; inp.value = value;
+  inp.disabled = disabled;
+  inp.oninput = () => { if (disabled) return; onInput(Number(inp.value) || 0); };
+  row.appendChild(inp);
+  host.appendChild(row);
+}
+
+function inspectorSelectRow(host, label, options, current, onChange, emptyLabel = '', disabled = false) {
+  const row = inspectorRow(label);
+  const sel = selectInput(options, current, onChange, false, emptyLabel, disabled);
+  row.appendChild(sel);
+  host.appendChild(row);
+}
+
+function inspectorVecRow(host, label, obj, key, len, disabled = false) {
+  const row = inspectorRow(label);
+  const holder = document.createElement('div');
+  holder.className = 'inspect-vec';
+  const arr = ensureVec(obj, key, len);
+  ['X', 'Y', 'Z'].slice(0, len).forEach((axis, idx) => {
+    const wrap = document.createElement('span');
+    const inp = document.createElement('input');
+    inp.type = 'number'; inp.step = 'any'; inp.value = arr[idx] ?? 0;
+    inp.disabled = disabled;
+    inp.oninput = () => {
+      if (disabled) return;
+      arr[idx] = Number(inp.value) || 0;
+      syncRaw();
+      update3DTransforms();
+    };
+    wrap.append(axis, inp);
+    holder.appendChild(wrap);
+  });
+  row.appendChild(holder);
+  host.appendChild(row);
+}
+
+function inspectorRow(label) {
+  const row = document.createElement('div');
+  row.className = 'inspector-row';
+  const l = document.createElement('label');
+  l.textContent = label;
+  row.appendChild(l);
+  return row;
+}
+
+function ensureVec(obj, key, len) {
+  obj[key] = Array.isArray(obj[key]) ? obj[key] : Array(len).fill(0);
+  while (obj[key].length < len) obj[key].push(0);
+  return obj[key];
+}
+
+function fmtNum(n) { return Number(n || 0).toFixed(2).replace(/\.00$/, ''); }
+
+async function ensure3DEditor() {
+  if (!$('#map3dCanvasHost')) return;
+  if (map3d.renderer) return;
+  if (!threeBoot) threeBoot = boot3DEditor();
+  return threeBoot;
+}
+
+async function boot3DEditor() {
+  show3DStatus('Three.js yükleniyor...');
+  const THREE = await import('https://esm.sh/three@0.160.0');
+  const { GLTFLoader } = await import('https://esm.sh/three@0.160.0/examples/jsm/loaders/GLTFLoader.js');
+  const { OrbitControls } = await import('https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js');
+  const { TransformControls } = await import('https://esm.sh/three@0.160.0/examples/jsm/controls/TransformControls.js');
+  map3d.THREE = THREE; map3d.GLTFLoader = GLTFLoader; map3d.OrbitControls = OrbitControls; map3d.TransformControls = TransformControls;
+  map3d.loader = new GLTFLoader();
+  map3d.raycaster = new THREE.Raycaster();
+  map3d.pointer = new THREE.Vector2();
+  map3d.dragOffset = new THREE.Vector3();
+
+  const host = $('#map3dCanvasHost');
+  map3d.scene = new THREE.Scene();
+  map3d.scene.background = new THREE.Color(0x08050f);
+  map3d.camera = new THREE.PerspectiveCamera(52, 1, 1, 20000);
+  map3d.renderer = new THREE.WebGLRenderer({ antialias: true });
+  map3d.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  host.innerHTML = '';
+  host.appendChild(map3d.renderer.domElement);
+
+  map3d.controls = new OrbitControls(map3d.camera, map3d.renderer.domElement);
+  map3d.controls.enableDamping = true;
+  map3d.controls.dampingFactor = .08;
+  map3d.controls.screenSpacePanning = false;
+
+  map3d.transformControls = new TransformControls(map3d.camera, map3d.renderer.domElement);
+  map3d.transformControls.setMode(map3d.transformMode);
+  map3d.transformControls.addEventListener('dragging-changed', event => {
+    map3d.controls.enabled = !event.value;
+    if (!event.value) renderConfig({ rebuild3d: false });
+  });
+  map3d.transformControls.addEventListener('objectChange', onTransformObjectChange);
+  map3d.scene.add(map3d.transformControls);
+  applyTransformToolSettings();
+
+  map3d.scene.add(new THREE.HemisphereLight(0xf6e9ff, 0x191027, 1.15));
+  const key = new THREE.DirectionalLight(0xffe0a3, 2.2);
+  key.position.set(420, 900, 560);
+  map3d.scene.add(key);
+  const fill = new THREE.DirectionalLight(0x9c7cff, .9);
+  fill.position.set(-800, 280, -600);
+  map3d.scene.add(fill);
+  map3d.scene.add(new THREE.AxesHelper(180));
+
+  map3d.resizeObserver = new ResizeObserver(resize3DEditor);
+  map3d.resizeObserver.observe(host);
+  resize3DEditor();
+  reset3DCamera();
+
+  const canvas = map3d.renderer.domElement;
+  canvas.addEventListener('pointerdown', on3DPointerDown);
+  canvas.addEventListener('pointermove', on3DPointerMove);
+  canvas.addEventListener('pointerup', on3DPointerUp);
+  canvas.addEventListener('pointerleave', on3DPointerUp);
+  canvas.addEventListener('dblclick', () => focusSelectedMachine());
+  window.addEventListener('keydown', handle3DShortcuts);
+  animate3D();
+}
+
+function resize3DEditor() {
+  if (!map3d.renderer || !map3d.camera) return;
+  const host = $('#map3dCanvasHost');
+  const w = Math.max(1, host.clientWidth);
+  const h = Math.max(1, host.clientHeight);
+  map3d.camera.aspect = w / h;
+  map3d.camera.updateProjectionMatrix();
+  map3d.renderer.setSize(w, h, false);
+}
+
+function animate3D() {
+  if (!map3d.renderer) return;
+  map3d.raf = requestAnimationFrame(animate3D);
+  map3d.controls.update();
+  map3d.renderer.render(map3d.scene, map3d.camera);
+}
+
+function show3DStatus(message, isErr = false) {
+  const el = $('#map3dStatus');
+  if (!el) return;
+  el.textContent = message;
+  el.className = isErr ? 'err' : '';
+}
+
+function show3DError(err) {
+  show3DStatus('3D editör yüklenemedi: ' + (err && err.message ? err.message : err), true);
+}
+
+async function rebuild3DScene() {
+  if (!map3d.scene || !config) return;
+  const THREE = map3d.THREE;
+  show3DStatus('3D sahne güncelleniyor...');
+  if (map3d.transformControls) map3d.transformControls.detach();
+  clear3DObject(map3d.mapObject); map3d.mapObject = null;
+  clear3DObject(map3d.editRoot); map3d.editRoot = null;
+  map3d.spawnGroup = null;
+  map3d.machineGroups = [];
+  map3d.editObjects = new Map();
+  clear3DObject(map3d.grid); map3d.grid = null;
+
+  map3d.editRoot = new THREE.Group();
+  map3d.scene.add(map3d.editRoot);
+
+  const groundY = getGroundY();
+  map3d.grid = new THREE.GridHelper(2200, 44, 0x7f63c5, 0x352752);
+  map3d.grid.position.y = groundY;
+  map3d.scene.add(map3d.grid);
+
+  if (config.map) {
+    try {
+      map3d.mapObject = await loadGltfObject(assetUrl('maps', config.map));
+      map3d.mapObject.traverse(obj => {
+        obj.userData.isMap = true;
+        if (obj.isMesh) { obj.receiveShadow = true; obj.frustumCulled = false; }
+      });
+      map3d.scene.add(map3d.mapObject);
+    } catch (err) {
+      show3DStatus(`Harita yüklenemedi (${config.map}); kutu marker'lar aktif`, true);
+    }
+  }
+
+  for (let i = 0; i < config.machines.length; i++) {
+    const group = await createMachine3D(config.machines[i], i);
+    map3d.machineGroups.push(group);
+    map3d.editRoot.add(group);
+  }
+  buildSpawn3D();
+  update3DTransforms();
+  update3DSelection();
+  reset3DCamera(false);
+  show3DStatus('Unity tarzı editör hazır. Hierarchy’den nesne seç, W/E/R araçlarıyla gizmodan düzenle.');
+}
+
+function clear3DObject(obj) {
+  if (!obj || !map3d.scene) return;
+  if (obj.parent) obj.parent.remove(obj);
+  else map3d.scene.remove(obj);
+}
+
+function assignEditKey(object, key) {
+  if (!object) return;
+  object.userData.editKey = key;
+  if (object.traverse) {
+    object.traverse(child => {
+      if (!child.userData.editKey) child.userData.editKey = key;
+    });
+  }
+}
+
+function registerEditObject(key, object, meta = {}) {
+  assignEditKey(object, key);
+  map3d.editObjects.set(key, { key, object, ...meta });
+  return object;
+}
+
+async function createMachine3D(machine, idx) {
+  const THREE = map3d.THREE;
+  const group = new THREE.Group();
+  group.userData.machineIndex = idx;
+  group.userData.partObjects = {};
+  group.userData.localPartRoot = new THREE.Group();
+  group.add(group.userData.localPartRoot);
+
+  const markerMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, transparent: true, opacity: .28, roughness: .55 });
+  const marker = new THREE.Mesh(new THREE.BoxGeometry(90, 130, 80), markerMat);
+  marker.position.y = 65;
+  marker.userData.machineIndex = idx;
+  marker.userData.isMachineMarker = true;
+  group.userData.marker = marker;
+  group.add(marker);
+
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(48, 53, 48),
+    new THREE.MeshBasicMaterial({ color: 0xe7b53c, transparent: true, opacity: .85, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 2;
+  ring.userData.machineIndex = idx;
+  group.userData.ring = ring;
+  group.add(ring);
+
+  if (machine.model) {
+    try {
+      const model = await loadGltfObject(assetUrl('models', machine.model));
+      model.userData.machineIndex = idx;
+      model.traverse(obj => {
+        obj.userData.machineIndex = idx;
+        if (obj.isMesh) obj.frustumCulled = false;
+      });
+      group.userData.modelObject = model;
+      group.add(model);
+    } catch (err) {
+      show3DStatus(`Model yüklenemedi (${machine.model}); marker ile devam ediliyor`, true);
+    }
+  }
+
+  Object.keys(EDIT_PARTS).forEach(part => {
+    const object = createMachinePart3D(machine, idx, part);
+    group.userData.partObjects[part] = object;
+    if (part === 'seat') map3d.editRoot.add(object);
+    else group.userData.localPartRoot.add(object);
+  });
+  setMachine3DTransform(group, machine);
+  updateMachinePart3D(group, machine, idx);
+  registerEditObject(machineKey(idx), group, { kind: 'machine', machineIndex: idx });
+  return group;
+}
+
+function buildPartGeometry(part, shape) {
+  const THREE = map3d.THREE;
+  const s = shape || 'cylinder';
+  if (s === 'box') return new THREE.BoxGeometry(1, 1, 1);
+  if (s === 'sphere') return new THREE.SphereGeometry(0.5, 24, 16);
+  if (s === 'torus') return new THREE.TorusGeometry(0.5, 0.25, 16, 32);
+  if (s === 'cone') return new THREE.ConeGeometry(0.5, 1, 24);
+  return new THREE.CylinderGeometry(0.5, 0.5, 1, 24);
+}
+
+function createMachinePart3D(machine, idx, part) {
+  const THREE = map3d.THREE;
+  const info = EDIT_PARTS[part];
+  const shape = part === 'screen' ? 'box' : (machine[part] && machine[part].shape) || 'cylinder';
+  const mat = new THREE.MeshStandardMaterial({ color: info.color, transparent: true, opacity: .58, roughness: .48, metalness: .05 });
+  const mesh = new THREE.Mesh(buildPartGeometry(part, shape), mat);
+  mesh.userData.machineIndex = idx;
+  mesh.userData.part = part;
+  mesh.userData.baseColor = info.color;
+  mesh.userData.baseOpacity = .58;
+  mesh.name = `${machine.id || 'machine'}_${part}`;
+  return registerEditObject(machinePartKey(idx, part), mesh, { kind: 'part', machineIndex: idx, part });
+}
+
+async function loadGltfObject(url) {
+  if (!map3d.modelCache.has(url)) {
+    const gltf = await map3d.loader.loadAsync(url);
+    map3d.modelCache.set(url, gltf.scene);
+  }
+  return map3d.modelCache.get(url).clone(true);
+}
+
+function assetUrl(root, name) {
+  return '/' + root + '/' + String(name || '').split('/').map(encodeURIComponent).join('/');
+}
+
+function rebuildPartGeometry(part, shape) {
+  const THREE = map3d.THREE;
+  const entry = part && map3d.editObjects.get(part);
+  if (!entry || !entry.object) return;
+  const mesh = entry.object;
+  const newGeo = buildPartGeometry(entry.part, shape);
+  mesh.geometry.dispose();
+  mesh.geometry = newGeo;
+}
+
+function update3DTransforms(opts = {}) {
+  if (!map3d.scene || !config) return;
+  if (map3d.machineGroups.length !== (config.machines || []).length) {
+    rebuild3DScene();
+    return;
+  }
+  config.machines.forEach((machine, idx) => {
+    const group = map3d.machineGroups[idx];
+    setMachine3DTransform(group, machine);
+    updateMachinePart3D(group, machine, idx, opts);
+  });
+  updateSpawn3D();
+  update3DSelection();
+}
+
+function setMachine3DTransform(group, machine) {
+  if (!group || !machine || !map3d.THREE) return;
+  const p = ensureVec(machine, 'position', 3);
+  const r = ensureVec(machine, 'rotation', 3);
+  const s = ensureVec(machine, 'scale', 3);
+  map3d.suppressTransformSync = true;
+  group.position.set(Number(p[0]) || 0, Number(p[1]) || 0, Number(p[2]) || 0);
+  group.rotation.set(degToRad(r[0]), degToRad(r[1]), degToRad(r[2]));
+  const sx = Number(s[0]) || 1;
+  const sy = Number(s[1]) || 1;
+  const sz = Number(s[2]) || 1;
+  group.scale.set(1, 1, 1);
+  if (group.userData.modelObject) {
+    group.userData.modelObject.scale.set(sx, sy, sz);
+    if (group.userData.localPartRoot) group.userData.localPartRoot.scale.set(sx, sy, sz);
+  } else {
+    group.scale.set(sx, sy, sz);
+    if (group.userData.localPartRoot) group.userData.localPartRoot.scale.set(1, 1, 1);
+  }
+  map3d.suppressTransformSync = false;
+}
+
+function updateMachinePart3D(group, machine, idx, opts = {}) {
+  if (!group || !machine || !group.userData.partObjects) return;
+  Object.keys(EDIT_PARTS).forEach(part => {
+    const target = getConfigTarget(machinePartKey(idx, part));
+    const object = group.userData.partObjects[part];
+    if (!target || !object) return;
+    if (opts.rebuildPart && target.shapeKey) {
+      const shape = (target.object && target.object[target.shapeKey]) || 'cylinder';
+      rebuildPartGeometry(machinePartKey(idx, part), shape);
+    }
+    applyConfigTransformToObject(object, target.object, target);
+  });
+}
+
+function getPartSize(cfg, target) {
+  if (target.sizeKey) {
+    const s = cfg[target.sizeKey];
+    if (s && Array.isArray(s)) return s;
+  }
+  if (target.radiusKey && cfg[target.radiusKey] != null) {
+    const r = Number(cfg[target.radiusKey]) || 1;
+    return [r * 2, r * 2, r * 2];
+  }
+  return target.defaultSize || [44, 44, 44];
+}
+
+function applyConfigTransformToObject(object, cfg, target) {
+  if (!object || !cfg || !target) return;
+  map3d.suppressTransformSync = true;
+  if (target.positionKey) {
+    const p = ensureVec(cfg, target.positionKey, 3);
+    object.position.set(Number(p[0]) || 0, Number(p[1]) || 0, Number(p[2]) || 0);
+  }
+  if (target.rotationKey) {
+    const r = ensureVec(cfg, target.rotationKey, 3);
+    object.rotation.set(degToRad(r[0]), degToRad(r[1]), degToRad(r[2]));
+  }
+  if (target.scaleKey) {
+    const s = ensureVec(cfg, target.scaleKey, 3);
+    object.scale.set(Number(s[0]) || 1, Number(s[1]) || 1, Number(s[2]) || 1);
+  } else if (target.sizeKey || target.radiusKey) {
+    const s = getPartSize(cfg, target);
+    object.scale.set(Number(s[0]) || 1, Number(s[1]) || 1, Number(s[2]) || 1);
+  }
+  map3d.suppressTransformSync = false;
+}
+
+function buildSpawn3D() {
+  const THREE = map3d.THREE;
+  map3d.spawnGroup = new THREE.Group();
+  const spawnMat = new THREE.MeshBasicMaterial({ color: 0x4cc46a });
+  const lookTargetMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+  const lookMat = new THREE.LineBasicMaterial({ color: 0x4cc46a });
+  const sphere = new THREE.Mesh(new THREE.SphereGeometry(24, 24, 12), spawnMat);
+  const lookTarget = new THREE.Mesh(new THREE.SphereGeometry(16, 20, 10), lookTargetMat);
+  const line = new THREE.Line(new THREE.BufferGeometry(), lookMat);
+  sphere.userData.baseColor = 0x4cc46a;
+  lookTarget.userData.baseColor = 0x38bdf8;
+  map3d.spawnGroup.userData.sphere = sphere;
+  map3d.spawnGroup.userData.lookTarget = lookTarget;
+  map3d.spawnGroup.userData.line = line;
+  map3d.spawnGroup.add(sphere, lookTarget, line);
+  map3d.editRoot.add(map3d.spawnGroup);
+  registerEditObject(SPAWN_POSITION_KEY, sphere, { kind: 'spawnPosition' });
+  registerEditObject(SPAWN_LOOK_KEY, lookTarget, { kind: 'spawnLookAt' });
+  updateSpawn3D();
+}
+
+function updateSpawn3D() {
+  if (!map3d.spawnGroup || !config || !map3d.THREE) return;
+  config.spawn = config.spawn || { position: [0, 0, 0], lookAt: [0, 0, 0] };
+  const p = ensureVec(config.spawn, 'position', 3);
+  const l = ensureVec(config.spawn, 'lookAt', 3);
+  const THREE = map3d.THREE;
+  map3d.spawnGroup.userData.sphere.position.set(p[0], p[1], p[2]);
+  map3d.spawnGroup.userData.lookTarget.position.set(l[0], l[1], l[2]);
+  map3d.spawnGroup.userData.line.geometry.setFromPoints([
+    new THREE.Vector3(p[0], p[1], p[2]),
+    new THREE.Vector3(l[0], l[1], l[2]),
+  ]);
+}
+
+function update3DSelection() {
+  selectedObjectKey = normalizeSelectedObjectKey();
+  const selectedTarget = getConfigTarget(selectedObjectKey);
+  map3d.machineGroups.forEach((group, idx) => {
+    const selected = selectedObjectKey === machineKey(idx);
+    const sameMachine = selectedTarget && selectedTarget.machineIndex === idx;
+    if (group.userData.marker) {
+      group.userData.marker.material.color.setHex(selected ? 0xe7b53c : 0x38bdf8);
+      group.userData.marker.material.opacity = selected ? .46 : .22;
+    }
+    if (group.userData.ring) group.userData.ring.visible = Boolean(sameMachine);
+    Object.values(group.userData.partObjects || {}).forEach(object => setEditObjectHighlight(object, object.userData.editKey === selectedObjectKey));
+  });
+  if (map3d.spawnGroup) {
+    setEditObjectHighlight(map3d.spawnGroup.userData.sphere, selectedObjectKey === SPAWN_POSITION_KEY);
+    setEditObjectHighlight(map3d.spawnGroup.userData.lookTarget, selectedObjectKey === SPAWN_LOOK_KEY);
+  }
+  attachTransformControl();
+}
+
+function setEditObjectHighlight(object, selected) {
+  if (!object) return;
+  object.traverse(child => {
+    if (!child.material || !child.userData.baseColor) return;
+    child.material.color.setHex(selected ? 0xe7b53c : child.userData.baseColor);
+    if ('opacity' in child.material) child.material.opacity = selected ? .9 : (child.userData.baseOpacity || .58);
+    child.material.needsUpdate = true;
+  });
+}
+
+function setTransformMode(mode) {
+  map3d.transformMode = mode;
+  document.querySelectorAll('[data-map3d-tool]').forEach(btn => btn.classList.toggle('active', btn.dataset.map3dTool === mode));
+  if (map3d.transformControls) {
+    map3d.transformControls.setMode(mode);
+    applyTransformToolSettings();
+    attachTransformControl();
+  }
+}
+
+function applyTransformToolSettings() {
+  if (!map3d.transformControls) return;
+  const snapEnabled = $('#map3dSnap') ? $('#map3dSnap').checked : true;
+  const snap = Math.max(0.001, Number($('#map3dSnapValue') ? $('#map3dSnapValue').value : 10) || 10);
+  map3d.transformControls.setTranslationSnap(snapEnabled ? snap : null);
+  map3d.transformControls.setRotationSnap(snapEnabled ? degToRad(15) : null);
+  map3d.transformControls.setScaleSnap(snapEnabled ? 0.01 : null);
+}
+
+function attachTransformControl() {
+  if (!map3d.transformControls || !config) return;
+  const target = getConfigTarget(selectedObjectKey);
+  const entry = target && map3d.editObjects.get(target.key);
+  if (!target || !entry || isTargetLocked(target) || !targetSupportsMode(target, map3d.transformMode)) {
+    map3d.transformControls.detach();
+    return;
+  }
+  let object = entry.object;
+  const group = target.kind === 'machine' ? map3d.machineGroups[target.machineIndex] : null;
+  if (target.kind === 'machine' && map3d.transformMode === 'scale' && group && group.userData.modelObject) object = group.userData.modelObject;
+  map3d.transformControls.attach(object);
+}
+
+function onTransformObjectChange() {
+  if (map3d.suppressTransformSync || !config) return;
+  const target = getConfigTarget(selectedObjectKey);
+  const entry = target && map3d.editObjects.get(target.key);
+  if (!target || !entry) return;
+  if (isTargetLocked(target)) {
+    map3d.transformControls.detach();
+    return;
+  }
+
+  if (target.kind === 'machine') {
+    const machine = config.machines[target.machineIndex];
+    const group = map3d.machineGroups[target.machineIndex];
+    if (!machine || !group) return;
+    if (map3d.transformMode === 'scale' && group.userData.modelObject) {
+      machine.scale = [group.userData.modelObject.scale.x, group.userData.modelObject.scale.y, group.userData.modelObject.scale.z].map(n => Number(n.toFixed(4)));
+    } else if (map3d.transformMode === 'scale') {
+      machine.scale = [group.scale.x, group.scale.y, group.scale.z].map(n => Number(n.toFixed(4)));
+    } else {
+      machine.position = [group.position.x, group.position.y, group.position.z].map(n => Number(n.toFixed(2)));
+      machine.rotation = [radToDeg(group.rotation.x), radToDeg(group.rotation.y), radToDeg(group.rotation.z)].map(n => Number(n.toFixed(2)));
+    }
+    if (group.userData.localPartRoot) {
+      const s = ensureVec(machine, 'scale', 3);
+      if (group.userData.modelObject) group.userData.localPartRoot.scale.set(Number(s[0]) || 1, Number(s[1]) || 1, Number(s[2]) || 1);
+      else group.userData.localPartRoot.scale.set(1, 1, 1);
+    }
+  } else {
+    const object = entry.object;
+    if (map3d.transformMode === 'translate' && target.positionKey) {
+      target.object[target.positionKey] = [object.position.x, object.position.y, object.position.z].map(n => Number(n.toFixed(2)));
+    } else if (map3d.transformMode === 'rotate' && target.rotationKey) {
+      target.object[target.rotationKey] = [radToDeg(object.rotation.x), radToDeg(object.rotation.y), radToDeg(object.rotation.z)].map(n => Number(n.toFixed(2)));
+    } else if (map3d.transformMode === 'scale' && (target.sizeKey || target.radiusKey)) {
+      target.object[target.sizeKey || target.radiusKey] = [object.scale.x, object.scale.y, object.scale.z].map(n => Number(n.toFixed(2)));
+    }
+    updateSpawn3D();
+  }
+  syncRaw();
+  update3DInspector();
+  refreshMachinePicker();
+  refreshHierarchy();
+}
+
+function duplicateSelectedMachine() {
+  const target = getConfigTarget(selectedObjectKey);
+  if (!target || target.kind !== 'machine') { toast('Çoğaltmak için makine gövdesini seçin', true); return; }
+  if (isTargetLocked(target)) { toast('Makine kilitli; önce kilidi açın', true); return; }
+  selectedMachineIndex = target.machineIndex;
+  if (!config || selectedMachineIndex < 0 || !config.machines[selectedMachineIndex]) return;
+  const copy = JSON.parse(JSON.stringify(config.machines[selectedMachineIndex]));
+  copy.id = uniqueMachineId(copy.id || 'slot');
+  const p = ensureVec(copy, 'position', 3);
+  p[0] += 120; p[2] += 120;
+  config.machines.push(copy);
+  selectedMachineIndex = config.machines.length - 1;
+  selectedObjectKey = machineKey(selectedMachineIndex);
+  renderConfig();
+  toast('Makine çoğaltıldı');
+}
+
+function deleteSelectedMachine() {
+  const target = getConfigTarget(selectedObjectKey);
+  if (!target || target.kind !== 'machine') { toast('Silmek için makine gövdesini seçin', true); return; }
+  if (isTargetLocked(target)) { toast('Makine kilitli; önce kilidi açın', true); return; }
+  selectedMachineIndex = target.machineIndex;
+  if (!config || selectedMachineIndex < 0 || !config.machines[selectedMachineIndex]) return;
+  const id = config.machines[selectedMachineIndex].id || 'makine';
+  if (!confirm(id + ' silinsin mi?')) return;
+  config.machines.splice(selectedMachineIndex, 1);
+  selectedMachineIndex = Math.max(0, selectedMachineIndex - 1);
+  selectedObjectKey = config.machines[selectedMachineIndex] ? machineKey(selectedMachineIndex) : SPAWN_POSITION_KEY;
+  renderConfig();
+  toast('Makine silindi');
+}
+
+function uniqueMachineId(base) {
+  const stem = String(base).replace(/_copy\d*$/, '') + '_copy';
+  const used = new Set((config.machines || []).map(m => m.id));
+  let i = 1;
+  while (used.has(stem + i)) i++;
+  return stem + i;
+}
+
+function handle3DShortcuts(e) {
+  if ($('#tab-map').style.display === 'none') return;
+  const tag = document.activeElement && document.activeElement.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (e.key === 'w' || e.key === 'W') { setTransformMode('translate'); e.preventDefault(); }
+  if (e.key === 'e' || e.key === 'E') { setTransformMode('rotate'); e.preventDefault(); }
+  if (e.key === 'r' || e.key === 'R') { setTransformMode('scale'); e.preventDefault(); }
+  if (e.key === 'f' || e.key === 'F') { focusSelectedMachine(); e.preventDefault(); }
+  if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelectedMachine(); e.preventDefault(); }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) { duplicateSelectedMachine(); e.preventDefault(); }
+}
+
+function reset3DCamera(useSelection = true) {
+  if (!map3d.camera || !map3d.controls) return;
+  const target = getFocusPoint(useSelection);
+  map3d.controls.target.copy(target);
+  map3d.camera.position.set(target.x + 760, target.y + 520, target.z + 760);
+  map3d.camera.lookAt(target);
+  map3d.controls.update();
+}
+
+function focusSelectedMachine() {
+  if (!map3d.controls || !map3d.camera) return;
+  const target = getFocusPoint(true);
+  const delta = new map3d.THREE.Vector3(430, 310, 430);
+  map3d.controls.target.copy(target);
+  map3d.camera.position.copy(target).add(delta);
+  map3d.camera.lookAt(target);
+  map3d.controls.update();
+}
+
+function getFocusPoint(useSelection) {
+  const THREE = map3d.THREE;
+  if (useSelection && config) {
+    const target = getConfigTarget(selectedObjectKey);
+    if (target && target.kind === 'machine') {
+      const p = ensureVec(target.object, 'position', 3);
+      return new THREE.Vector3(p[0], p[1] + 70, p[2]);
+    }
+    const entry = target && map3d.editObjects.get(target.key);
+    if (entry && entry.object) {
+      const point = new THREE.Vector3();
+      entry.object.getWorldPosition(point);
+      return point;
+    }
+    if (target && target.positionKey) {
+      const p = ensureVec(target.object, target.positionKey, 3);
+      return new THREE.Vector3(p[0], p[1] + 40, p[2]);
+    }
+  }
+  if (config && config.spawn) {
+    const p = ensureVec(config.spawn, 'position', 3);
+    return new THREE.Vector3(p[0], p[1] + 70, p[2]);
+  }
+  return new THREE.Vector3(0, getGroundY() + 70, 0);
+}
+
+function getGroundY() {
+  if (config && config.machines && config.machines.length) {
+    const vals = config.machines.map(m => ensureVec(m, 'position', 3)[1]).filter(Number.isFinite);
+    if (vals.length) return vals.reduce((a, b) => a + b, 0) / vals.length;
+  }
+  if (config && config.spawn) return ensureVec(config.spawn, 'position', 3)[1] || 0;
+  return 0;
+}
+
+function on3DPointerDown(e) {
+  if (!map3d.camera || !config) return;
+  const hit = pickEditableObject(e);
+  if (!hit) return;
+  setSelectedObject(hit.key);
+  if (isTargetLocked(hit.key)) return;
+  if (map3d.transformControls) return;
+  const point = intersectGround(e);
+  if (!point) return;
+  const p = ensureVec(config.machines[selectedMachineIndex], 'position', 3);
+  map3d.dragging = true;
+  map3d.controls.enabled = false;
+  map3d.renderer.domElement.setPointerCapture(e.pointerId);
+  map3d.dragOffset.set(point.x - p[0], 0, point.z - p[2]);
+  e.preventDefault();
+}
+
+function on3DPointerMove(e) {
+  if (map3d.transformControls) return;
+  if (!map3d.dragging || selectedMachineIndex < 0 || !config.machines[selectedMachineIndex]) return;
+  if (isTargetLocked(selectedObjectKey)) return;
+  const point = intersectGround(e);
+  if (!point) return;
+  const pos = ensureVec(config.machines[selectedMachineIndex], 'position', 3);
+  let x = point.x - map3d.dragOffset.x;
+  let z = point.z - map3d.dragOffset.z;
+  if ($('#map3dSnap') && $('#map3dSnap').checked) { x = Math.round(x / 10) * 10; z = Math.round(z / 10) * 10; }
+  pos[0] = Number(x.toFixed(2));
+  pos[2] = Number(z.toFixed(2));
+  syncRaw();
+  update3DTransforms();
+  update3DInspector();
+  e.preventDefault();
+}
+
+function on3DPointerUp(e) {
+  if (!map3d.dragging) return;
+  map3d.dragging = false;
+  map3d.controls.enabled = true;
+  try { map3d.renderer.domElement.releasePointerCapture(e.pointerId); } catch (err) {}
+  renderConfig({ rebuild3d: false });
+}
+
+function pickEditableObject(e) {
+  const hits = raycast(e, map3d.scene.children);
+  for (const hit of hits) {
+    let obj = hit.object;
+    while (obj) {
+      if (obj.userData.editKey && map3d.editObjects.has(obj.userData.editKey)) return { key: obj.userData.editKey, object: obj };
+      obj = obj.parent;
+    }
+  }
+  return null;
+}
+
+function intersectGround(e) {
+  if (!map3d.raycaster || selectedMachineIndex < 0 || !config.machines[selectedMachineIndex]) return null;
+  setPointerFromEvent(e);
+  map3d.raycaster.setFromCamera(map3d.pointer, map3d.camera);
+  const y = ensureVec(config.machines[selectedMachineIndex], 'position', 3)[1] || 0;
+  const plane = new map3d.THREE.Plane(new map3d.THREE.Vector3(0, 1, 0), -y);
+  const point = new map3d.THREE.Vector3();
+  return map3d.raycaster.ray.intersectPlane(plane, point) ? point : null;
+}
+
+function raycast(e, objects) {
+  setPointerFromEvent(e);
+  map3d.raycaster.setFromCamera(map3d.pointer, map3d.camera);
+  return map3d.raycaster.intersectObjects(objects, true);
+}
+
+function setPointerFromEvent(e) {
+  const rect = map3d.renderer.domElement.getBoundingClientRect();
+  map3d.pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  map3d.pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+}
+
+function degToRad(value) { return (Number(value) || 0) * Math.PI / 180; }
+function radToDeg(value) { return (Number(value) || 0) * 180 / Math.PI; }
+
+$('#rawToggle').onchange = () => {
+  const raw = $('#rawToggle').checked;
+  $('#rawView').style.display = raw ? '' : 'none';
+  $('#formView').style.display = raw ? 'none' : '';
+  if (!raw) {
+    try {
+      const parsed = JSON.parse($('#rawJson').value);
+      parsed.__lists = config.__lists;
+      config = parsed;
+      renderConfig();
+    } catch (e) { toast('JSON hatalı: ' + e.message, true); $('#rawToggle').checked = true; $('#rawView').style.display = ''; $('#formView').style.display = 'none'; }
+  }
+};
+
+$('#map3dMachineSelect').onchange = e => setSelectedMachine(Number(e.target.value), { focus: true });
+document.querySelectorAll('[data-map3d-tool]').forEach(btn => {
+  btn.onclick = () => setTransformMode(btn.dataset.map3dTool);
+});
+$('#map3dFocus').onclick = () => focusSelectedMachine();
+$('#map3dResetCamera').onclick = () => reset3DCamera();
+$('#map3dDuplicate').onclick = () => duplicateSelectedMachine();
+$('#map3dDelete').onclick = () => deleteSelectedMachine();
+$('#map3dSnap').onchange = () => applyTransformToolSettings();
+$('#map3dSnapValue').oninput = () => applyTransformToolSettings();
+
+$('#cfgAddMachine').onclick = () => {
+  config.machines = config.machines || [];
+  config.machines.push(MACHINE_TEMPLATE());
+  selectedMachineIndex = config.machines.length - 1;
+  renderConfig();
+};
+$('#cfgReload').onclick = () => { loadConfig(); toast('Yeniden yüklendi'); };
+$('#godotEditorOpen').onclick = () => window.open('/admin/godot-editor/', '_blank', 'noopener');
+$('#cfgSave').onclick = async () => {
+  try {
+    let toSave;
+    if ($('#rawToggle').checked) toSave = JSON.parse($('#rawJson').value);
+    else { toSave = JSON.parse(JSON.stringify(config)); delete toSave.__lists; }
+    await api('/admin/api/config', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: toSave }),
+    });
+    toast('Kaydedildi — Unity bir sonraki lobi yüklemesinde alır');
+  } catch (e) { toast(e.message, true); }
+};
+
+// ── Durum ──
+async function loadStatus() {
+  const s = await api('/admin/api/status');
+  $('#statusInfo').textContent = `Çalışma süresi: ${Math.floor(s.uptimeSeconds / 3600)}s ${Math.floor((s.uptimeSeconds % 3600) / 60)}dk`;
+  $('#walletsBody').innerHTML = s.wallets.map(w =>
+    `<tr><td><code>${esc(w.id)}</code></td><td>${w.balance}</td><td>${w.registered ? 'evet' : '<span class="muted">hayır</span>'}</td></tr>`
+  ).join('') || '<tr><td colspan="3" class="muted">Aktif cüzdan yok</td></tr>';
+  $('#cloudBody').innerHTML = s.cloudSessions.map(c =>
+    `<tr><td class="muted">${esc(c.id).slice(0, 8)}…</td><td><code>${esc(c.sessionID)}</code></td><td>${esc(c.game)}</td>
+     <td class="muted">${c.width}×${c.height}</td><td class="muted">${new Date(c.lastAccess).toLocaleTimeString('tr-TR')}</td></tr>`
+  ).join('') || '<tr><td colspan="5" class="muted">Aktif stream yok</td></tr>';
+}
+
+// ── Yardımcılar ──
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function fmtSize(n) {
+  if (n > 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+  if (n > 1024) return (n / 1024).toFixed(1) + ' KB';
+  return n + ' B';
+}
+
+async function refreshAll() {
+  $('#statusLine').textContent = location.host;
+  loadPlayers();
+}
+
+// Oturum var mı kontrolü
+api('/admin/api/players').then(() => {
+  $('#login').style.display = 'none';
+  $('#logoutBtn').style.display = '';
+  refreshAll();
+}).catch(() => {});
+</script>
+</body>
+</html>

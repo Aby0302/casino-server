@@ -1,0 +1,25 @@
+; Engine configuration file.
+; Prefer editing this through the Godot editor after the initial scaffold.
+
+config_version=5
+
+[application]
+
+config/name="Casino Godot Client"
+config/icon="res://icon.png"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.3", "Forward Plus")
+config/description="Retailerway Casino — Godot client"
+config/tags=PackedStringArray("casino", "slot", "game")
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+
+[rendering]
+
+renderer/rendering_method="forward_plus"
+environment/defaults/default_clear_color=Color(0.0156863, 0.0156863, 0.0235294, 1)
+textures/vram_compression/import_etc2_astc=true

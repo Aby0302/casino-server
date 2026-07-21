@@ -1,0 +1,42 @@
+{
+  "map": "casino-lobby.glb",
+  "spawn": {
+    "position": [720.5, -236.0, 140.0],
+    "lookAt": [620.0, -236.0, -150.0]
+  },
+  "machines": [
+    {
+      "id": "slot_01",
+      "type": "slot",
+      "model": "slot-machine-1.glb",
+      "audio": "slot-machine-1.mp3",
+      "game": "sugar-rush",
+      "position": [620.0, -253.2, -210.0],
+      "rotation": [0.0, 0.0, 0.0],
+      "scale": [0.06, 0.06, 0.06],
+      "interactionRadius": 80.0,
+      "seat": {
+        "position": [620.0, -236.0, -150.0],
+        "size": [44.0, 44.0, 44.0],
+        "shape": "sphere"
+      },
+      "screen": {
+        "position": [0.0, 80.0, 655.0],
+        "rotation": [0.0, 0.0, 0.0],
+        "size": [360.0, 260.0, 20.0]
+      },
+      "spinButton": {
+        "position": [160.0, -120.0, 660.0],
+        "rotation": [20.0, 0.0, 0.0],
+        "size": [44.0, 10.0, 44.0],
+        "shape": "cylinder"
+      },
+      "lever": {
+        "position": [290.0, 0.0, 520.0],
+        "rotation": [0.0, 0.0, 0.0],
+        "size": [32.0, 66.0, 32.0],
+        "shape": "cylinder"
+      }
+    }
+  ]
+}

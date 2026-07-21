@@ -1,0 +1,16 @@
+{
+  "short_name": "Sugar Blast 1000",
+  "name": "Sugar Blast 1000 — Cascading Cluster Pays Slot",
+  "icons": [
+    {
+      "src": "favicon.png",
+      "type": "image/png",
+      "sizes": "256x256"
+    }
+  ],
+  "start_url": ".",
+  "display": "fullscreen",
+  "orientation": "any",
+  "theme_color": "#050a14",
+  "background_color": "#050a14"
+}

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#060b18;color:#fff;font-family:sans-serif;padding:10px}
+#info{position:fixed;top:10px;left:10px;z-index:9999;background:rgba(0,0,0,0.8);padding:8px;border-radius:4px;font-size:12px;color:#0f0}
+canvas{border:2px solid red}
+</style>
+</head>
+<body>
+<div id="info">Loading...</div>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script>
+<script>
+const info = document.getElementById('info');
+
+function log(msg) {
+  info.innerHTML = info.innerHTML + '<br>' + msg;
+  console.log(msg);
+}
+
+log('DPR: ' + window.devicePixelRatio);
+log('Viewport: ' + window.innerWidth + 'x' + window.innerHeight);
+
+// Test basic Phaser render
+const testScene = {
+  key: 'test',
+  create() {
+    log('Scene create() OK');
+    const g = this.add.graphics();
+    g.fillStyle(0xff0000, 1);
+    g.fillCircle(200, 200, 50);
+    g.fillStyle(0x00ff00, 1);
+    g.fillRect(100, 300, 100, 100);
+    log('Rendered test shapes');
+
+    // Test sprite rendering
+    const txt = this.add.text(200, 150, '🍎🍊🍇🍉🍌', { fontSize: '48px' }).setOrigin(0.5);
+    log('Emoji text rendered: ' + txt.text);
+
+    // Test if WebGL or Canvas
+    const renderer = this.game.renderer.type;
+    log('Renderer: ' + (renderer === Phaser.CANVAS ? 'CANVAS' : renderer === Phaser.WEBGL ? 'WEBGL' : 'unknown:' + renderer));
+    
+    this.add.text(200, 450, 'Sugar Rush Test', { fontSize: '24px', color: '#ff0' }).setOrigin(0.5);
+    log('Game ready - check for red circle + green rect + emojis');
+  }
+};
+
+try {
+  log('Creating Phaser game...');
+  const game = new Phaser.Game({
+    type: Phaser.AUTO,
+    width: 400,
+    height: 600,
+    backgroundColor: '#1a0033',
+    scene: [testScene],
+    scale: {
+      mode: Phaser.Scale.FIT,
+      autoCenter: Phaser.Scale.CENTER_BOTH
+    }
+  });
+  log('Phaser game created successfully');
+} catch(e) {
+  log('ERROR: ' + e.message);
+  info.style.color = '#f00';
+}
+</script>
+</body>
+</html>

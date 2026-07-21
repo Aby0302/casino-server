@@ -1,0 +1,12 @@
+node_modules
+data
+*.log
+*.bak
+Screenshot_*
+.env
+godot-client/.godot/
+godot-client/export/
+godot-client/android/
+godot-client/builds/
+godot-client/addons/godot_cef/
+session-ses_*
