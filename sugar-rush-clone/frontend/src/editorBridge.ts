@@ -4,7 +4,9 @@ type EditorBridgeWindow = Window &
   typeof globalThis & {
     __chipBalance?: (balance: unknown) => void;
     __pendingChipBalance?: number;
+    __sugarBlastBootScene?: unknown;
     __sugarBlastGameScene?: Game;
+    __sugarBlastStartGame?: () => boolean;
   };
 
 function parseBalance(balance: unknown): number | null {
@@ -35,6 +37,7 @@ export function attachEditorBridgeScene(scene: Game): void {
 
   if (typeof bridgeWindow.__chipBalance !== 'function') installEditorBridge();
   bridgeWindow.__sugarBlastGameScene = scene;
+  bridgeWindow.__sugarBlastStartGame = () => true;
 
   if (bridgeWindow.__pendingChipBalance !== undefined) {
     applyBalance(scene, bridgeWindow.__pendingChipBalance);
@@ -43,6 +46,24 @@ export function attachEditorBridgeScene(scene: Game): void {
   scene.events.once('shutdown', () => {
     if (bridgeWindow.__sugarBlastGameScene === scene) {
       delete bridgeWindow.__sugarBlastGameScene;
+    }
+  });
+}
+
+export function attachEditorBridgeBoot(scene: unknown, startGame: () => void): void {
+  const bridgeWindow = window as EditorBridgeWindow;
+  bridgeWindow.__sugarBlastBootScene = scene;
+  bridgeWindow.__sugarBlastStartGame = () => {
+    if (bridgeWindow.__sugarBlastGameScene) return true;
+    startGame();
+    return true;
+  };
+
+  const events = (scene as { events?: { once?: (event: string, cb: () => void) => void } }).events;
+  events?.once?.('shutdown', () => {
+    if (bridgeWindow.__sugarBlastBootScene === scene) {
+      delete bridgeWindow.__sugarBlastBootScene;
+      delete bridgeWindow.__sugarBlastStartGame;
     }
   });
 }

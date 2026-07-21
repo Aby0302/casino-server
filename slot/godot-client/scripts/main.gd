@@ -1317,9 +1317,10 @@ func _client_render_preload_script() -> String:
     var scene = window.__sugarBlastGameScene;
     if (!scene) {
       window.__casinoGodotPendingSpinBet = nextBet;
+      startGameFromBridge();
       return false;
     }
-    if (scene.introSplash && typeof scene.introSplash.hide === 'function') scene.introSplash.hide();
+    dismissIntro(scene);
     if (scene._spinLock) {
       window.__casinoGodotPendingSpinBet = nextBet;
       return false;
@@ -1333,10 +1334,28 @@ func _client_render_preload_script() -> String:
     return true;
   }
 
+  function dismissIntro(scene) {
+    if (scene && scene.introSplash && typeof scene.introSplash.hide === 'function') {
+      scene.introSplash.hide();
+      return true;
+    }
+    return false;
+  }
+
+  function startGameFromBridge() {
+    if (typeof window.__sugarBlastStartGame !== 'function') return false;
+    try {
+      window.__sugarBlastStartGame();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function kickStart() {
     var scene = window.__sugarBlastGameScene;
     if (scene) {
-      if (scene.introSplash && typeof scene.introSplash.hide === 'function') scene.introSplash.hide();
+      dismissIntro(scene);
       if (window.__casinoGodotPendingSpinBet) {
         var pending = window.__casinoGodotPendingSpinBet;
         window.__casinoGodotPendingSpinBet = 0;
@@ -1344,6 +1363,8 @@ func _client_render_preload_script() -> String:
       }
       return true;
     }
+
+    if (startGameFromBridge()) return false;
 
     try {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true }));

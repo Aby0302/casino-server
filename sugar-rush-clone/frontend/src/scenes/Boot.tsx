@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { Theme } from '../constants/theme';
+import { attachEditorBridgeBoot } from '../editorBridge';
 
 /**
  * PREMIUM Boot Scene — Professional title screen with smooth animations
@@ -160,6 +161,7 @@ export class Boot extends Phaser.Scene {
     // ═══════════════════════════════════════════════════
     this.triggerEntranceAnimations();
     this.setupButtonInteractions();
+    attachEditorBridgeBoot(this, () => this.startGame());
     
     // Initial Layout & Resize Listener
     this.layoutAll();

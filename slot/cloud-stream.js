@@ -157,7 +157,14 @@ async function prepareCloudGame(session) {
 
   const page = session.page;
   try {
-    const gameSceneReady = await page.evaluate(() => Boolean(window.__sugarBlastGameScene));
+    const gameSceneReady = await page.evaluate(() => {
+      if (window.__sugarBlastGameScene) return true;
+      if (typeof window.__sugarBlastStartGame === 'function') {
+        window.__sugarBlastStartGame();
+        return false;
+      }
+      return false;
+    });
     if (!gameSceneReady) {
       await page.keyboard.press('Space');
     }
@@ -187,6 +194,10 @@ async function triggerCloudSpin(session, bet) {
   const page = session.page;
   return page.evaluate(value => {
     const scene = window.__sugarBlastGameScene;
+    if (!scene && typeof window.__sugarBlastStartGame === 'function') {
+      window.__sugarBlastStartGame();
+      return false;
+    }
     const spinHit = scene && scene.spinControls && scene.spinControls.spinHit;
     if (!spinHit || typeof spinHit.emit !== 'function') {
       window.dispatchEvent(new CustomEvent('unitySpin', { detail: { bet: value } }));
