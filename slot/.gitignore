@@ -10,3 +10,9 @@ godot-client/android/
 godot-client/builds/
 godot-client/addons/godot_cef/
 session-ses_*
+mobile-shell/android/.gradle/
+mobile-shell/android/local.properties
+mobile-shell/android/**/build/
+mobile-shell/ios/DerivedData/
+mobile-shell/ios/**/*.xcuserdata/
+mobile-shell/ios/**/*.xcuserstate

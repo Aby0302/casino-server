@@ -6,6 +6,8 @@ data
 .godot/
 export/
 android/
+!slot/mobile-shell/android/
+!slot/mobile-shell/android/**
 builds/
 godot-client/.godot/
 godot-client/export/
@@ -15,3 +17,9 @@ godot-client/addons/godot_cef/
 session-ses_*
 .claude/
 sugar-rush-clone.backup-20260714-214128/
+slot/mobile-shell/android/.gradle/
+slot/mobile-shell/android/local.properties
+slot/mobile-shell/android/**/build/
+slot/mobile-shell/ios/DerivedData/
+slot/mobile-shell/ios/**/*.xcuserdata/
+slot/mobile-shell/ios/**/*.xcuserstate

@@ -42,6 +42,7 @@ pipeline instead of committed.
 
 Godot CEF currently ships desktop binaries only (Linux, macOS, Windows). Android
 or iOS store builds need a mobile-native WebView shell instead of this CEF addon.
+Those shells live under `../mobile-shell/android` and `../mobile-shell/ios`.
 
 When CEF is present, the client opens:
 

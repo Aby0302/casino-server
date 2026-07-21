@@ -181,6 +181,19 @@
     })
   }
 
+  function notifyNativePlayer(id, name) {
+    const payload = { type: 'setPlayer', id, name }
+    if (typeof window.sendIpcMessage === 'function') {
+      try { window.sendIpcMessage(JSON.stringify(payload)) } catch (_) {}
+    }
+    if (window.CasinoShell && typeof window.CasinoShell.setPlayer === 'function') {
+      try { window.CasinoShell.setPlayer(id, name) } catch (_) {}
+    }
+    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.casinoShell) {
+      try { window.webkit.messageHandlers.casinoShell.postMessage(payload) } catch (_) {}
+    }
+  }
+
   async function savePlayer(event) {
     event.preventDefault()
     const id = els.playerID.value.trim().replace(/[^a-zA-Z0-9_.:-]/g, '').slice(0, 128)
@@ -191,14 +204,12 @@
     }
 
     setMessage('Saving player...')
-    if (typeof window.sendIpcMessage === 'function') {
-      window.sendIpcMessage(JSON.stringify({ type: 'setPlayer', id, name }))
-    }
     await fetchJson('/api/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, name }),
     })
+    notifyNativePlayer(id, name)
     location.href = lobbyUrlForSession(id)
   }
 
