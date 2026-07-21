@@ -1,0 +1,16 @@
+{
+  "name": "casino-server",
+  "description": "Casino game server with slot, poker, blackjack",
+  "dockerfile": "Dockerfile",
+  "port": 3001,
+  "volumes": [
+    {
+      "hostPath": "./server/models",
+      "containerPath": "/app/server/models"
+    },
+    {
+      "hostPath": "./server/maps",
+      "containerPath": "/app/server/maps"
+    }
+  ]
+}
