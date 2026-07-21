@@ -330,6 +330,7 @@ func _style_label(label: Label, size: int, color: Color) -> void:
 
 func _style_button(button: Button, accent: Color) -> void:
     button.custom_minimum_size.y = 44.0
+    button.focus_mode = Control.FOCUS_NONE
     button.add_theme_font_size_override("font_size", 15)
     button.add_theme_color_override("font_color", UI_TEXT)
     button.add_theme_color_override("font_hover_color", Color.WHITE)
