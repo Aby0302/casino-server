@@ -188,6 +188,8 @@
             <button class="act small danger" id="map3dDelete">Sil</button>
             <label class="muted"><input type="checkbox" id="map3dSnap" checked> Snap</label>
             <input id="map3dSnapValue" type="number" value="10" step="1" style="width:70px" title="Taşıma snap değeri">
+            <button class="act small" id="map3dModelEdit">Model Düzenle</button>
+            <button class="act small gold" id="map3dModelEditExit" style="display:none">Model Düzenle Çık</button>
           </div>
           <div class="unity-editor">
             <aside class="unity-panel">
@@ -253,6 +255,9 @@ const $ = sel => document.querySelector(sel);
 let config = null;
 let selectedMachineIndex = 0;
 let selectedObjectKey = 'machine:0';
+let modelEditMode = false;
+let modelEditMachineIndex = -1;
+let modelEditSubMeshes = [];
 let threeBoot = null;
 const map3d = {
   THREE: null, GLTFLoader: null, OrbitControls: null,
@@ -441,6 +446,18 @@ function getConfigTarget(key = selectedObjectKey) {
     };
   }
   const part = match[2];
+  if (String(part).startsWith('model_mesh:')) {
+    const meshName = part.slice('model_mesh:'.length);
+    const entry = map3d.editObjects.get(key);
+    if (entry && entry.object) {
+      return {
+        key, kind: 'modelMesh', label: meshName || 'mesh',
+        object: entry.object, machineIndex: idx, meshName,
+        positionKey: 'position', rotationKey: 'rotation', scaleKey: 'scale',
+      };
+    }
+    return null;
+  }
   const info = EDIT_PARTS[part];
   if (!info) return null;
   machine[info.path] = machine[info.path] || {};
@@ -466,6 +483,96 @@ function targetSupportsMode(target, mode) {
 }
 
 function targetLockKey(target) { return target && target.lockKey ? target.lockKey : 'locked'; }
+
+function applyModelParts(model, machine) {
+  if (!model || !machine || !machine.modelParts) return;
+  model.traverse(child => {
+    if (child.isMesh) {
+      const part = machine.modelParts[child.name];
+      if (part) {
+        if (part.position) child.position.set(part.position[0], part.position[1], part.position[2]);
+        if (part.rotation) child.rotation.set(degToRad(part.rotation[0]), degToRad(part.rotation[1]), degToRad(part.rotation[2]));
+        if (part.scale) child.scale.set(part.scale[0], part.scale[1], part.scale[2]);
+      }
+    }
+  });
+}
+
+function toggleModelEditMode() {
+  if (modelEditMode) exitModelEditMode();
+  else enterModelEditMode();
+}
+
+function enterModelEditMode() {
+  const target = getConfigTarget(selectedObjectKey);
+  if (!target || target.kind !== 'machine') { toast('Önce bir makine seçin', true); return; }
+  const idx = target.machineIndex;
+  const group = map3d.machineGroups[idx];
+  if (!group || !group.userData.modelObject) { toast('Bu makinenin yüklenmiş modeli yok', true); return; }
+  modelEditMode = true;
+  modelEditMachineIndex = idx;
+  selectedMachineIndex = idx;
+  refreshMachinePicker();
+  if (map3d.transformControls) map3d.transformControls.detach();
+  $('#map3dModelEdit').style.display = 'none';
+  $('#map3dModelEditExit').style.display = '';
+  modelEditSubMeshes = [];
+  group.userData.modelObject.traverse(child => {
+    if (child.isMesh) {
+      const name = child.name || 'mesh_' + modelEditSubMeshes.length;
+      modelEditSubMeshes.push({ name, mesh: child });
+      const key = machineKey(idx) + ':model_mesh:' + name;
+      child.userData.editKey = key;
+      map3d.editObjects.set(key, { key, object: child, kind: 'modelMesh', machineIndex: idx, meshName: name });
+    }
+  });
+  if (modelEditSubMeshes.length) {
+    setSelectedObject(machineKey(idx) + ':model_mesh:' + modelEditSubMeshes[0].name);
+  }
+  refreshHierarchy();
+  update3DSelection();
+  toast('Model düzenleme: ' + modelEditSubMeshes.length + ' alt-parça');
+}
+
+function saveModelParts() {
+  const idx = modelEditMachineIndex;
+  const machine = config && config.machines[idx];
+  if (!machine) return;
+  const parts = {};
+  modelEditSubMeshes.forEach(({ name, mesh }) => {
+    const p = mesh.position;
+    const r = mesh.rotation;
+    const s = mesh.scale;
+    if (p.x !== 0 || p.y !== 0 || p.z !== 0 || r.x !== 0 || r.y !== 0 || r.z !== 0 || s.x !== 1 || s.y !== 1 || s.z !== 1) {
+      parts[name] = {
+        position: [Number(p.x.toFixed(2)), Number(p.y.toFixed(2)), Number(p.z.toFixed(2))],
+        rotation: [Number(radToDeg(r.x).toFixed(2)), Number(radToDeg(r.y).toFixed(2)), Number(radToDeg(r.z).toFixed(2))],
+        scale: [Number(s.x.toFixed(4)), Number(s.y.toFixed(4)), Number(s.z.toFixed(4))],
+      };
+    }
+  });
+  if (Object.keys(parts).length) machine.modelParts = parts;
+  else delete machine.modelParts;
+}
+
+function exitModelEditMode() {
+  if (!modelEditMode) return;
+  const idx = modelEditMachineIndex;
+  saveModelParts();
+  modelEditSubMeshes.forEach(({ name }) => {
+    map3d.editObjects.delete(machineKey(idx) + ':model_mesh:' + name);
+  });
+  modelEditSubMeshes = [];
+  modelEditMode = false;
+  modelEditMachineIndex = -1;
+  $('#map3dModelEdit').style.display = '';
+  $('#map3dModelEditExit').style.display = 'none';
+  if (config && config.machines[idx]) setSelectedMachine(idx);
+  syncRaw();
+  refreshHierarchy();
+  update3DSelection();
+  toast('Model düzenleme kapandı');
+}
 
 function isTargetLocked(targetOrKey = selectedObjectKey) {
   const target = typeof targetOrKey === 'string' ? getConfigTarget(targetOrKey) : targetOrKey;
@@ -692,6 +799,7 @@ function setSelectedMachine(idx, opts = {}) {
     setSelectedObject(SPAWN_POSITION_KEY, opts);
     return;
   }
+  if (modelEditMode && Number(idx) !== modelEditMachineIndex) exitModelEditMode();
   selectedMachineIndex = Math.max(0, Math.min(Number(idx) || 0, config.machines.length - 1));
   setSelectedObject(machineKey(selectedMachineIndex), opts);
 }
@@ -703,6 +811,7 @@ function setSelectedObject(key, opts = {}) {
     target = getConfigTarget(selectedObjectKey);
   }
   if (!target) return;
+  if (modelEditMode && target.kind !== 'modelMesh') exitModelEditMode();
   selectedObjectKey = target.key;
   if (Number.isInteger(target.machineIndex)) selectedMachineIndex = target.machineIndex;
   if (!targetSupportsMode(target, map3d.transformMode)) setTransformMode('translate');
@@ -734,6 +843,11 @@ function refreshHierarchy() {
   (config.machines || []).forEach((m, idx) => {
     rows.push(button(machineKey(idx), '▣ ' + (m.id || ('Makine ' + (idx + 1))), `${m.game || 'oyun yok'} · ${m.model || 'model yok'}`));
     Object.keys(EDIT_PARTS).forEach(part => rows.push(button(machinePartKey(idx, part), EDIT_PARTS[part].label, `${m.id || ('Makine ' + (idx + 1))}.${part}`, true)));
+    if (modelEditMode && modelEditMachineIndex === idx) {
+      modelEditSubMeshes.forEach(({ name }) => {
+        rows.push(button(machineKey(idx) + ':model_mesh:' + name, '◈ ' + name, `${m.id || 'Makine'}.mesh`, true));
+      });
+    }
   });
   host.innerHTML = rows.join('') || '<div class="muted" style="padding:8px">Sahnede nesne yok.</div>';
   host.querySelectorAll('[data-edit-key]').forEach(btn => {
@@ -784,6 +898,33 @@ function update3DInspector() {
       inspectorSelectRow(host, 'Shape', ['box', 'sphere', 'cylinder', 'cone', 'torus'], currentShape,
         value => { target.object[target.shapeKey] = value; markConfigChanged({ rebuildPart: true }); }, '', locked);
     }
+    return;
+  }
+
+  if (target.kind === 'modelMesh') {
+    title.innerHTML = `<b>◈ ${esc(target.label)}</b><div class="muted">Makine model alt-parçası · Model düzenleme aktif</div>`;
+    host.appendChild(title);
+    ['position', 'rotation', 'scale'].forEach(key => {
+      const row = inspectorRow(key.charAt(0).toUpperCase() + key.slice(1));
+      const holder = document.createElement('div');
+      holder.className = 'inspect-vec';
+      const v3 = target.object[key];
+      if (!v3) return;
+      ['X', 'Y', 'Z'].forEach((axis, i) => {
+        const wrap = document.createElement('span');
+        const inp = document.createElement('input');
+        inp.type = 'number'; inp.step = 'any'; inp.value = key === 'rotation' ? radToDeg(v3.getComponent(i)).toFixed(2) : v3.getComponent(i).toFixed(2);
+        inp.oninput = () => {
+          const val = Number(inp.value) || 0;
+          v3.setComponent(i, key === 'rotation' ? degToRad(val) : val);
+          syncRaw();
+        };
+        wrap.append(axis, inp);
+        holder.appendChild(wrap);
+      });
+      row.appendChild(holder);
+      host.appendChild(row);
+    });
     return;
   }
 
@@ -980,6 +1121,7 @@ function show3DError(err) {
 async function rebuild3DScene() {
   if (!map3d.scene || !config) return;
   const THREE = map3d.THREE;
+  if (modelEditMode) exitModelEditMode();
   show3DStatus('3D sahne güncelleniyor...');
   if (map3d.transformControls) map3d.transformControls.detach();
   clear3DObject(map3d.mapObject); map3d.mapObject = null;
@@ -1080,6 +1222,7 @@ async function createMachine3D(machine, idx) {
       });
       group.userData.modelObject = model;
       group.add(model);
+      applyModelParts(model, machine);
     } catch (err) {
       show3DStatus(`Model yüklenemedi (${machine.model}); marker ile devam ediliyor`, true);
     }
@@ -1152,6 +1295,7 @@ function update3DTransforms(opts = {}) {
   config.machines.forEach((machine, idx) => {
     const group = map3d.machineGroups[idx];
     setMachine3DTransform(group, machine);
+    if (!modelEditMode && group.userData.modelObject) applyModelParts(group.userData.modelObject, machine);
     updateMachinePart3D(group, machine, idx, opts);
   });
   updateSpawn3D();
@@ -1273,8 +1417,25 @@ function update3DSelection() {
       group.userData.marker.material.opacity = selected ? .46 : .22;
     }
     if (group.userData.ring) group.userData.ring.visible = Boolean(sameMachine);
-    Object.values(group.userData.partObjects || {}).forEach(object => setEditObjectHighlight(object, object.userData.editKey === selectedObjectKey));
+    if (!modelEditMode) {
+      Object.values(group.userData.partObjects || {}).forEach(object => setEditObjectHighlight(object, object.userData.editKey === selectedObjectKey));
+    }
   });
+  if (modelEditMode && selectedTarget && selectedTarget.kind === 'modelMesh' && map3d.THREE) {
+    const THREE = map3d.THREE;
+    modelEditSubMeshes.forEach(({ name, mesh }) => {
+      const isSelected = selectedTarget.meshName === name;
+      mesh.traverse(child => {
+        if (child.isMesh && child.material) {
+          const mats = Array.isArray(child.material) ? child.material : [child.material];
+          mats.forEach(mat => {
+            mat.emissive = isSelected ? new THREE.Color(0xe7b53c) : new THREE.Color(0);
+            mat.emissiveIntensity = isSelected ? 0.35 : 0;
+          });
+        }
+      });
+    });
+  }
   if (map3d.spawnGroup) {
     setEditObjectHighlight(map3d.spawnGroup.userData.sphere, selectedObjectKey === SPAWN_POSITION_KEY);
     setEditObjectHighlight(map3d.spawnGroup.userData.lookTarget, selectedObjectKey === SPAWN_LOOK_KEY);
@@ -1352,6 +1513,8 @@ function onTransformObjectChange() {
       if (group.userData.modelObject) group.userData.localPartRoot.scale.set(Number(s[0]) || 1, Number(s[1]) || 1, Number(s[2]) || 1);
       else group.userData.localPartRoot.scale.set(1, 1, 1);
     }
+  } else if (target.kind === 'modelMesh') {
+    saveModelParts();
   } else {
     const object = entry.object;
     if (map3d.transformMode === 'translate' && target.positionKey) {
@@ -1417,8 +1580,10 @@ function handle3DShortcuts(e) {
   if (e.key === 'e' || e.key === 'E') { setTransformMode('rotate'); e.preventDefault(); }
   if (e.key === 'r' || e.key === 'R') { setTransformMode('scale'); e.preventDefault(); }
   if (e.key === 'f' || e.key === 'F') { focusSelectedMachine(); e.preventDefault(); }
-  if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelectedMachine(); e.preventDefault(); }
-  if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) { duplicateSelectedMachine(); e.preventDefault(); }
+  if (!modelEditMode) {
+    if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelectedMachine(); e.preventDefault(); }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) { duplicateSelectedMachine(); e.preventDefault(); }
+  }
 }
 
 function reset3DCamera(useSelection = true) {
@@ -1579,6 +1744,8 @@ $('#map3dDuplicate').onclick = () => duplicateSelectedMachine();
 $('#map3dDelete').onclick = () => deleteSelectedMachine();
 $('#map3dSnap').onchange = () => applyTransformToolSettings();
 $('#map3dSnapValue').oninput = () => applyTransformToolSettings();
+$('#map3dModelEdit').onclick = () => toggleModelEditMode();
+$('#map3dModelEditExit').onclick = () => toggleModelEditMode();
 
 $('#cfgAddMachine').onclick = () => {
   config.machines = config.machines || [];
