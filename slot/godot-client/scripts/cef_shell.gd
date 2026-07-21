@@ -3,6 +3,7 @@ extends Control
 @export var server_base := "https://casino.retailerway.com"
 @export var session_id := "godot-player"
 @export var client_render_secret := ""
+@export var enable_accelerated_osr := false
 
 const PROFILE_PATH := "user://player.cfg"
 
@@ -43,7 +44,7 @@ func _open_remote_lobby() -> void:
     browser.offset_right = 0.0
     browser.offset_bottom = 0.0
 
-    browser_obj.set("enable_accelerated_osr", true)
+    browser_obj.set("enable_accelerated_osr", enable_accelerated_osr)
     browser_obj.set("background_color", Color(0.02, 0.02, 0.04, 1.0))
     browser_obj.set("popup_policy", 1)
     browser_obj.set("url", _remote_lobby_url())
@@ -155,6 +156,10 @@ func _apply_runtime_overrides() -> void:
             session_id = _sanitize_session_id(arg.substr("--session-id=".length()))
         elif arg.begins_with("--client-render-secret="):
             client_render_secret = arg.substr("--client-render-secret=".length()).strip_edges()
+        elif arg.begins_with("--cef-accelerated="):
+            enable_accelerated_osr = _parse_bool(arg.substr("--cef-accelerated=".length()), enable_accelerated_osr)
+
+    enable_accelerated_osr = _parse_bool(OS.get_environment("CASINO_CEF_ACCELERATED"), enable_accelerated_osr)
 
 
 func _on_browser_ipc_message(message: String) -> void:
@@ -184,3 +189,12 @@ func _sanitize_session_id(value: String) -> String:
         if (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or (c >= "0" and c <= "9") or c in ["_", ".", ":", "-"]:
             clean += c
     return clean.left(128)
+
+
+func _parse_bool(value: String, fallback: bool) -> bool:
+    var clean := value.strip_edges().to_lower()
+    if clean in ["1", "true", "yes", "on"]:
+        return true
+    if clean in ["0", "false", "no", "off"]:
+        return false
+    return fallback
