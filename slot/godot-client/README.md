@@ -40,6 +40,10 @@ under `godot-client/addons/godot_cef/`. The addon binaries are large, so that
 directory is ignored by git and should be installed locally or by the packaging
 pipeline instead of committed.
 
+Linux builds force CEF to use `ozone-platform=x11` in `project.godot`. Godot can
+still run on Wayland, but CEF's Vulkan accelerated off-screen renderer is not
+compatible with Chromium's Wayland ozone backend on this stack.
+
 Godot CEF currently ships desktop binaries only (Linux, macOS, Windows). Android
 or iOS store builds need a mobile-native WebView shell instead of this CEF addon.
 Those shells live under `../mobile-shell/android` and `../mobile-shell/ios`.

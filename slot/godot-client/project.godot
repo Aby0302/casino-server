@@ -18,6 +18,10 @@ window/size/viewport_width=1280
 window/size/viewport_height=720
 window/stretch/mode="canvas_items"
 
+[godot_cef]
+
+advanced/custom_command_line_switches="ozone-platform=x11"
+
 [rendering]
 
 renderer/rendering_method="forward_plus"
