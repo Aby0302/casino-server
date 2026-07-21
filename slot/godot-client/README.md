@@ -1,12 +1,11 @@
 # Casino Godot Client
 
-Godot 4 thin-shell client for the casino. The default scene is now a full-screen
-Godot CEF browser that loads the remote lobby from the Node server, so lobby UI,
-game launch flow, and most new features can ship server-side without rebuilding
-the native Godot package.
+Godot 4 native 3D casino lobby. The default scene is `scenes/main.tscn`, so the
+client opens into the 3D lobby and uses the live Node server for config, assets,
+balance, and remote game rendering.
 
-The old native 3D lobby remains available at `scenes/main.tscn` for development
-and fallback experiments, but `project.godot` starts `scenes/cef_shell.tscn`.
+An optional full-screen remote WebView/CEF shell remains available at
+`scenes/cef_shell.tscn` for store-shell experiments, but it is not the default.
 
 ## Run
 
@@ -14,28 +13,29 @@ and fallback experiments, but `project.godot` starts `scenes/cef_shell.tscn`.
 2. Open `godot-client/project.godot` in Godot.
 3. Press Play.
 
-The default shell loads:
+The default 3D lobby loads:
 
-- `https://casino.retailerway.com/client/lobby`
-- `https://casino.retailerway.com/client/session`
 - `https://casino.retailerway.com/casino-config.json`
+- `https://casino.retailerway.com/maps/<map>.glb`
+- `https://casino.retailerway.com/models/<model>.glb`
 - `wss://casino.retailerway.com/?game=balance&sessionID=godot-player`
-- `https://casino.retailerway.com/client/start` inside the lobby game iframe
-- `https://casino.retailerway.com/client-game/sugar-rush/*` after token-gated launch
+- `https://casino.retailerway.com/client/start` for CEF in-world game screens when the addon is installed
+- `https://casino.retailerway.com/cloud/stream` as the fallback in-world game screen path
 
 ## Current Features
 
-- Starts a full-screen `CefTexture` browser instead of native 3D lobby logic.
-- Uses a token-gated `/client/lobby` shell session cookie.
-- Loads remote lobby UI from `client-lobby.html` and `client-lobby.js` on the server.
-- Reads live `casino-config.json` to render the machine list.
-- Connects to the balance WebSocket and hot-reloads config updates.
-- Launches Sugar Rush in an iframe through `/client/start` without exposing game assets in the Godot bundle.
-- Persists player changes back to `user://player.cfg` through CEF IPC.
+- Loads the live lobby config, map GLB, and machine GLBs.
+- Uses `CharacterBody3D` movement instead of raw transform movement.
+- Generates static collision bodies from imported GLB meshes.
+- Treats config spawn/seat positions as camera targets, then snaps the player's capsule feet onto the closest lobby floor collider.
+- Connects to the read-only balance WebSocket and hot-reloads config updates.
+- Displays Sugar Rush on the 3D slot machine screen through CEF when available.
+- Falls back to the live Sugar Rush cloud stream when CEF is not installed.
+- Sends spin input to the active client renderer or cloud session without opening a browser window.
 
-## CEF Shell
+## CEF Rendering
 
-The default shell requires the `dsh0416/godot-cef` `CefTexture` addon installed
+The 3D slot screen can use the `dsh0416/godot-cef` addon when it is installed
 under `godot-client/addons/godot_cef/`. The addon binaries are large, so that
 directory is ignored by git and should be installed locally or by the packaging
 pipeline instead of committed.
@@ -44,19 +44,19 @@ Linux builds force CEF to use `ozone-platform=x11` in `project.godot`. Godot can
 still run on Wayland, but CEF's Vulkan accelerated off-screen renderer is not
 compatible with Chromium's Wayland ozone backend on this stack.
 
-The shell defaults to software OSR because NVIDIA/Vulkan DMA-BUF accelerated OSR
-can load the page in CEF while drawing a blank Godot texture on some drivers. To
-retry accelerated OSR for debugging, run with `CASINO_CEF_ACCELERATED=1` or
-`-- --cef-accelerated=1`.
+The optional full-screen CEF shell defaults to software OSR because
+NVIDIA/Vulkan DMA-BUF accelerated OSR can load the page in CEF while drawing a
+blank Godot texture on some drivers. To retry accelerated OSR for shell
+debugging, run with `CASINO_CEF_ACCELERATED=1` or `-- --cef-accelerated=1`.
 
 Godot CEF currently ships desktop binaries only (Linux, macOS, Windows). Android
 or iOS store builds need a mobile-native WebView shell instead of this CEF addon.
 Those shells live under `../mobile-shell/android` and `../mobile-shell/ios`.
 
-When CEF is present, the client opens:
+When CEF is present in the default 3D lobby, the in-world slot screen opens:
 
 ```text
-https://casino.retailerway.com/client/lobby?sessionID=<player>
+https://casino.retailerway.com/client/start?game=sugar-rush&sessionID=<player>
 ```
 
 If the server has `CLIENT_RENDER_SECRET` set, pass the matching client launch
@@ -72,18 +72,21 @@ or:
 godot --path godot-client -- --client-render-secret=<secret>
 ```
 
-The first lobby request uses the secret to mint an HttpOnly shell cookie. After
-that, the web lobby launches games with `/client/start` using the shell cookie,
-so the secret does not need to be embedded in iframe URLs.
+The full-screen remote shell uses `/client/lobby` first to mint an HttpOnly shell
+cookie. That mode is available by opening `scenes/cef_shell.tscn` manually.
 
-Without the addon, the default shell shows an installation error. To run the old
-native lobby manually, open `scenes/main.tscn` in the editor.
+Without the addon, the default 3D lobby keeps using `/cloud/start`,
+`/cloud/stream`, and `/cloud/input` automatically.
 
 ## Controls
 
-- Mouse/touch: interact with the remote lobby and games.
-- `Esc`: close the active game iframe in the remote lobby.
-- Legacy native 3D controls still apply only when running `scenes/main.tscn`.
+- `WASD` or arrow keys: move
+- Left click: capture mouse
+- Mouse: look around
+- `E`: sit at the nearby slot machine
+- `G`: show Sugar Rush on the nearby machine screen
+- `Space`: spin the active machine stream
+- `Esc`: release mouse
 
 ## Test Hook
 
@@ -96,5 +99,5 @@ godot --headless --path godot-client --check-only --quit
 ## Next Work
 
 - Move CEF addon installation into release packaging once Linux builds are stable.
-- Add a mobile-native WebView shell if targeting Android/iOS stores; Godot CEF is desktop-only today.
-- Keep native shell capabilities generic so future features ship through the remote lobby.
+- Keep the optional remote shell and mobile-native shells available for store-update-minimized builds.
+- Add pointer/click projection so the 3D screen can receive direct mouse/touch input.
