@@ -84,6 +84,7 @@ var _touch_move_y := 0.0
 var _touch_look_dx := 0.0
 var _touch_look_dy := 0.0
 var hot_reload_in_progress := false
+var _hot_reload_target_machines := 0
 
 
 func _ready() -> void:
@@ -113,8 +114,12 @@ func _poll_balance_socket() -> void:
     while websocket.get_available_packet_count() > 0:
         var payload := websocket.get_packet().get_string_from_utf8()
         var message: Variant = JSON.parse_string(payload)
-        if typeof(message) == TYPE_DICTIONARY and message.has("balance"):
-            balance_label.text = "Bakiye: %s" % str(message["balance"])
+        if typeof(message) == TYPE_DICTIONARY:
+            if message.has("balance"):
+                balance_label.text = "Bakiye: %s" % str(message["balance"])
+            if message.get("type") == "config:updated" and not hot_reload_in_progress:
+                hot_reload_in_progress = true
+                _hot_reload_config()
 
     var state := websocket.get_ready_state()
     if state != websocket_last_state:
@@ -408,7 +413,7 @@ func _build_hud(canvas: CanvasLayer) -> void:
     status_card.add_child(status_label)
 
     var help := Label.new()
-    help.text = "WASD/Oklar hareket | Fare bakis | E otur | G ekran | Space/makine dugmesi spin | Ctrl+R yenile"
+    help.text = "WASD/Oklar hareket | Fare bakis | E otur | G ekran | Space/makine dugmesi spin | Ctrl+R yenile | Admin panelde kayit -> tum cihazlarda canli guncelleme"
     help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     _style_label(help, 12, Color(1.0, 1.0, 1.0, 0.56))
     box.add_child(help)
@@ -576,6 +581,31 @@ func _load_remote_config() -> void:
         set_status("Config request failed to start: %s" % error_string(err))
 
 
+func _hot_reload_config() -> void:
+    set_status("Config hot reload baslatiliyor...")
+    _clear_machines()
+    if config_request != null:
+        config_request.queue_free()
+    _load_remote_config()
+
+
+func _clear_machines() -> void:
+    active_machine_index = -1
+    nearby_machine_index = -1
+    cloud_id = ""
+    cloud_token = ""
+    cloud_stream_status = "inactive"
+    cloud_stream_started = false
+    cloud_stream_requested = false
+    _stop_cloud_stream()
+    for entry in machines:
+        var node_val: Variant = entry.get("node")
+        if node_val is Node:
+            (node_val as Node).queue_free()
+    machines.clear()
+    _refresh_machine_ui()
+
+
 func _on_config_response(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
     if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
         set_status("Config request failed: result=%s code=%s" % [result, response_code])
@@ -587,6 +617,9 @@ func _on_config_response(result: int, response_code: int, _headers: PackedString
         return
 
     var config: Dictionary = parsed_config
+    if hot_reload_in_progress:
+        var machines_value: Variant = config.get("machines", [])
+        _hot_reload_target_machines = machines_value.size() if typeof(machines_value) == TYPE_ARRAY else 0
     _apply_spawn(config)
     _download_map(String(config.get("map", "")), config)
 
@@ -868,6 +901,11 @@ func _load_machine_from_path(machine: Dictionary, local_path: String) -> void:
     })
     _refresh_machine_ui()
     set_status("Loaded machine: %s (%s colliders)" % [machine_node.name, added_machine_colliders])
+
+    if hot_reload_in_progress and _hot_reload_target_machines > 0 and machines.size() >= _hot_reload_target_machines:
+        hot_reload_in_progress = false
+        _hot_reload_target_machines = 0
+        set_status("Config hot reload tamamlandi")
 
     if OS.get_environment("CASINO_AUTOSTART_STREAM") == "1" and active_machine_index < 0:
         call_deferred("_start_machine_game", machines.size() - 1)

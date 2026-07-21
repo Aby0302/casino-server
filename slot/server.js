@@ -232,6 +232,7 @@ const server = http.createServer((req, res) => {
     setWalletBalance: (id, amount) => { adjustDisplayBalance(id, amount - displayBalance(id)); },
     listWallets: () => [...walletSessions.keys()],
     listCloudSessions,
+    onConfigSaved: () => broadcastConfigUpdate(),
   })) {
     return;
   }
@@ -683,6 +684,13 @@ function broadcastBalance(sessionID) {
     if (clientSessionID === sessionID && client.readyState === 1) {
       sendBalance(client, sessionID);
     }
+  }
+}
+
+function broadcastConfigUpdate() {
+  const msg = JSON.stringify({ type: 'config:updated', ts: Date.now() });
+  for (const [client] of wsSessions.entries()) {
+    if (client.readyState === 1) client.send(msg);
   }
 }
 

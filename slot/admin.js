@@ -456,6 +456,7 @@ function handleAdminRoute(req, res, ctx) {
       const configFile = ensureConfigFile();
       try { fs.copyFileSync(configFile, `${configFile}.bak`); } catch (err) {}
       fs.writeFileSync(configFile, JSON.stringify(config, null, 2) + '\n');
+      if (typeof ctx.onConfigSaved === 'function') ctx.onConfigSaved();
       return json(res, 200, { ok: true });
     }
 
