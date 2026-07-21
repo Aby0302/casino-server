@@ -1,0 +1,227 @@
+;(function () {
+  'use strict'
+
+  const state = {
+    sessionID: '',
+    balance: null,
+    socket: null,
+    socketTimer: null,
+    config: null,
+  }
+
+  const els = {
+    playerPill: document.getElementById('player-pill'),
+    balancePill: document.getElementById('balance-pill'),
+    socketPill: document.getElementById('socket-pill'),
+    playerID: document.getElementById('player-id'),
+    playerName: document.getElementById('player-name'),
+    profileForm: document.getElementById('profile-form'),
+    refreshConfig: document.getElementById('refresh-config'),
+    message: document.getElementById('message'),
+    machines: document.getElementById('machines'),
+    machineCount: document.getElementById('machine-count'),
+    gameLayer: document.getElementById('game-layer'),
+    gameFrame: document.getElementById('game-frame'),
+    gameTitle: document.getElementById('game-title'),
+    closeGame: document.getElementById('close-game'),
+  }
+
+  function setMessage(text) {
+    els.message.textContent = text || ''
+  }
+
+  function formatBalance(value) {
+    const number = Number(value)
+    if (!Number.isFinite(number)) return '...'
+    return number.toLocaleString('en-US')
+  }
+
+  function syncSessionUI() {
+    els.playerPill.textContent = state.sessionID || 'unknown'
+    els.playerID.value = state.sessionID || ''
+    els.balancePill.textContent = formatBalance(state.balance)
+  }
+
+  function lobbyUrlForSession(sessionID) {
+    return '/client/lobby?sessionID=' + encodeURIComponent(sessionID)
+  }
+
+  async function fetchJson(url, options) {
+    const response = await fetch(url, Object.assign({ cache: 'no-store' }, options || {}))
+    if (!response.ok) throw new Error(url + ' failed with HTTP ' + response.status)
+    return response.json()
+  }
+
+  async function loadSession() {
+    const session = await fetchJson('/client/session')
+    state.sessionID = session.sessionID || 'godot-player'
+    state.balance = session.balance
+    syncSessionUI()
+  }
+
+  async function loadConfig() {
+    setMessage('Loading casino config...')
+    state.config = await fetchJson('/casino-config.json?v=' + Date.now())
+    renderMachines()
+    setMessage('')
+  }
+
+  function machineTitle(machine) {
+    const game = String(machine.game || 'sugar-rush')
+    if (game === 'sugar-rush') return 'Sugar Rush'
+    return game.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  }
+
+  function renderMachines() {
+    const machines = Array.isArray(state.config && state.config.machines) ? state.config.machines : []
+    els.machineCount.textContent = String(machines.length)
+    els.machines.textContent = ''
+
+    if (!machines.length) {
+      const empty = document.createElement('p')
+      empty.className = 'copy'
+      empty.textContent = 'No machines are configured yet.'
+      els.machines.appendChild(empty)
+      return
+    }
+
+    for (const machine of machines) {
+      const game = String(machine.game || 'sugar-rush')
+      const supported = game === 'sugar-rush'
+      const card = document.createElement('article')
+      card.className = 'machine-card'
+
+      const art = document.createElement('div')
+      art.className = 'machine-art'
+      const cabinet = document.createElement('div')
+      cabinet.className = 'cabinet'
+      art.appendChild(cabinet)
+
+      const body = document.createElement('div')
+      body.className = 'machine-body'
+      const title = document.createElement('h3')
+      title.className = 'machine-title'
+      title.textContent = machineTitle(machine)
+      const meta = document.createElement('p')
+      meta.className = 'machine-meta'
+      meta.textContent = (machine.id || 'slot') + ' / ' + game
+      const actions = document.createElement('div')
+      actions.className = 'machine-actions'
+      const play = document.createElement('button')
+      play.type = 'button'
+      play.textContent = supported ? 'Play now' : 'Unsupported'
+      play.disabled = !supported
+      play.addEventListener('click', () => openGame(machine))
+      actions.appendChild(play)
+
+      body.appendChild(title)
+      body.appendChild(meta)
+      body.appendChild(actions)
+      card.appendChild(art)
+      card.appendChild(body)
+      els.machines.appendChild(card)
+    }
+  }
+
+  function openGame(machine) {
+    const game = String(machine.game || 'sugar-rush')
+    if (game !== 'sugar-rush') {
+      setMessage('This game is not enabled for the web lobby yet.')
+      return
+    }
+
+    els.gameTitle.textContent = machineTitle(machine)
+    els.gameLayer.classList.add('active')
+    els.gameFrame.src = '/client/start?game=' + encodeURIComponent(game) + '&sessionID=' + encodeURIComponent(state.sessionID)
+  }
+
+  function closeGame() {
+    els.gameFrame.src = 'about:blank'
+    els.gameLayer.classList.remove('active')
+  }
+
+  function socketUrl() {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    return protocol + '//' + location.host + '/?game=balance&sessionID=' + encodeURIComponent(state.sessionID)
+  }
+
+  function connectSocket() {
+    if (!state.sessionID) return
+    if (state.socket) state.socket.close()
+    if (state.socketTimer) clearTimeout(state.socketTimer)
+
+    els.socketPill.textContent = 'connecting'
+    const ws = new WebSocket(socketUrl())
+    state.socket = ws
+
+    ws.addEventListener('open', () => {
+      els.socketPill.textContent = 'online'
+    })
+
+    ws.addEventListener('message', event => {
+      let payload
+      try { payload = JSON.parse(event.data) } catch (_) { return }
+      if (payload && Object.prototype.hasOwnProperty.call(payload, 'balance')) {
+        state.balance = payload.balance
+        syncSessionUI()
+      }
+      if (payload && payload.type === 'config:updated') {
+        loadConfig().catch(error => setMessage(error.message))
+      }
+    })
+
+    ws.addEventListener('close', () => {
+      if (state.socket !== ws) return
+      els.socketPill.textContent = 'offline'
+      state.socketTimer = setTimeout(connectSocket, 1800)
+    })
+
+    ws.addEventListener('error', () => {
+      els.socketPill.textContent = 'error'
+    })
+  }
+
+  async function savePlayer(event) {
+    event.preventDefault()
+    const id = els.playerID.value.trim().replace(/[^a-zA-Z0-9_.:-]/g, '').slice(0, 128)
+    const name = els.playerName.value.trim() || id
+    if (!id) {
+      setMessage('Player ID is required.')
+      return
+    }
+
+    setMessage('Saving player...')
+    if (typeof window.sendIpcMessage === 'function') {
+      window.sendIpcMessage(JSON.stringify({ type: 'setPlayer', id, name }))
+    }
+    await fetchJson('/api/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, name }),
+    })
+    location.href = lobbyUrlForSession(id)
+  }
+
+  async function boot() {
+    try {
+      await loadSession()
+      connectSocket()
+      await loadConfig()
+    } catch (error) {
+      setMessage(error.message || String(error))
+    }
+  }
+
+  els.profileForm.addEventListener('submit', event => {
+    savePlayer(event).catch(error => setMessage(error.message || String(error)))
+  })
+  els.refreshConfig.addEventListener('click', () => {
+    loadConfig().catch(error => setMessage(error.message || String(error)))
+  })
+  els.closeGame.addEventListener('click', closeGame)
+  window.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && els.gameLayer.classList.contains('active')) closeGame()
+  })
+
+  boot()
+})()

@@ -27,9 +27,12 @@ const PRECISION = 1000000;
 const DEFAULT_SESSION_ID = 'unity-player';
 const INITIAL_BALANCE = 10000;
 const CLIENT_GAME_TTL_MS = 30 * 60 * 1000;
+const CLIENT_SHELL_TTL_MS = 24 * 60 * 60 * 1000;
 const CLIENT_RENDER_SECRET = process.env.CLIENT_RENDER_SECRET || '';
 const CLIENT_GAME_COOKIE = 'casinoClientGame';
+const CLIENT_SHELL_COOKIE = 'casinoClientShell';
 const clientGameSessions = new Map(); // token -> { game, sessionID, expiresAt, lastAccess }
+const clientShellSessions = new Map(); // token -> { sessionID, expiresAt, lastAccess }
 
 // ── HTTP server ──
 
@@ -122,6 +125,18 @@ function pruneClientGameSessions() {
   }
 }
 
+function pruneClientShellSessions() {
+  const now = Date.now();
+  for (const [token, session] of clientShellSessions) {
+    if (!session || session.expiresAt <= now) clientShellSessions.delete(token);
+  }
+}
+
+function setSessionCookie(req, res, name, token, ttlMs) {
+  const secure = requestBaseUrl(req).startsWith('https://') ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `${name}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(ttlMs / 1000)}${secure}`);
+}
+
 function createClientGameSession(game, sessionID) {
   pruneClientGameSessions();
   const token = crypto.randomBytes(32).toString('base64url');
@@ -132,6 +147,18 @@ function createClientGameSession(game, sessionID) {
     lastAccess: Date.now(),
   };
   clientGameSessions.set(token, session);
+  return { token, session };
+}
+
+function createClientShellSession(sessionID) {
+  pruneClientShellSessions();
+  const token = crypto.randomBytes(32).toString('base64url');
+  const session = {
+    sessionID: normalizeSessionID(sessionID),
+    expiresAt: Date.now() + CLIENT_SHELL_TTL_MS,
+    lastAccess: Date.now(),
+  };
+  clientShellSessions.set(token, session);
   return { token, session };
 }
 
@@ -148,21 +175,98 @@ function getClientGameSession(req) {
   return session;
 }
 
+function getClientShellSession(req) {
+  pruneClientShellSessions();
+  const token = parseCookies(req)[CLIENT_SHELL_COOKIE];
+  if (!token) return null;
+  const session = clientShellSessions.get(token);
+  if (!session || session.expiresAt <= Date.now()) {
+    clientShellSessions.delete(token);
+    return null;
+  }
+  session.lastAccess = Date.now();
+  return session;
+}
+
 function setClientGameCookie(req, res, token) {
-  const secure = requestBaseUrl(req).startsWith('https://') ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `${CLIENT_GAME_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(CLIENT_GAME_TTL_MS / 1000)}${secure}`);
+  setSessionCookie(req, res, CLIENT_GAME_COOKIE, token, CLIENT_GAME_TTL_MS);
+}
+
+function setClientShellCookie(req, res, token) {
+  setSessionCookie(req, res, CLIENT_SHELL_COOKIE, token, CLIENT_SHELL_TTL_MS);
+}
+
+function providedClientSecret(req, requestUrl) {
+  return String(req.headers['x-client-render-secret'] || requestUrl.searchParams.get('clientSecret') || '');
+}
+
+function hasValidClientSecret(req, requestUrl) {
+  return !CLIENT_RENDER_SECRET || providedClientSecret(req, requestUrl) === CLIENT_RENDER_SECRET;
+}
+
+function serveProtectedClientLobby(req, res, relativePath) {
+  const shellSession = getClientShellSession(req);
+  if (!shellSession) {
+    res.writeHead(403, { 'Cache-Control': 'no-store' });
+    res.end('Forbidden');
+    return true;
+  }
+
+  serveStatic(SLOT_DIR, relativePath, res, { 'Cache-Control': 'no-store' });
+  return true;
 }
 
 function handleClientGameRoute(url, req, res) {
   const requestUrl = new URL(req.url, requestBaseUrl(req));
 
+  if (req.method === 'GET' && url === '/client/lobby') {
+    const existingShell = getClientShellSession(req);
+    if (!existingShell && !hasValidClientSecret(req, requestUrl)) {
+      json(res, 403, { ok: false, error: 'Client render secret required' });
+      return true;
+    }
+
+    const requestedSessionID = requestUrl.searchParams.get('sessionID') || (existingShell && existingShell.sessionID) || DEFAULT_SESSION_ID;
+    const { token } = createClientShellSession(requestedSessionID);
+    setClientShellCookie(req, res, token);
+    res.writeHead(302, {
+      Location: '/client/lobby/',
+      'Cache-Control': 'no-store',
+    });
+    res.end();
+    return true;
+  }
+
+  if (req.method === 'GET' && url === '/client/lobby/') {
+    return serveProtectedClientLobby(req, res, 'client-lobby.html');
+  }
+
+  if (req.method === 'GET' && url === '/client/lobby/client-lobby.js') {
+    return serveProtectedClientLobby(req, res, 'client-lobby.js');
+  }
+
+  if (req.method === 'GET' && url === '/client/session') {
+    const shellSession = getClientShellSession(req);
+    if (!shellSession) {
+      json(res, 403, { ok: false, error: 'Client shell session required' });
+      return true;
+    }
+    json(res, 200, {
+      ok: true,
+      sessionID: shellSession.sessionID,
+      balance: displayBalance(shellSession.sessionID),
+      expiresAt: shellSession.expiresAt,
+    });
+    return true;
+  }
+
   if (req.method === 'GET' && url === '/client/start') {
-    if (CLIENT_RENDER_SECRET) {
-      const providedSecret = String(req.headers['x-client-render-secret'] || requestUrl.searchParams.get('clientSecret') || '');
-      if (providedSecret !== CLIENT_RENDER_SECRET) {
-        json(res, 403, { ok: false, error: 'Client render secret required' });
-        return true;
-      }
+    const requestedSessionID = normalizeSessionID(requestUrl.searchParams.get('sessionID'));
+    const shellSession = getClientShellSession(req);
+    const shellAuthorized = shellSession && shellSession.sessionID === requestedSessionID;
+    if (!shellAuthorized && !hasValidClientSecret(req, requestUrl)) {
+      json(res, 403, { ok: false, error: 'Client render secret required' });
+      return true;
     }
 
     const game = requestUrl.searchParams.get('game') === 'sugar-rush' ? 'sugar-rush' : '';
@@ -171,7 +275,7 @@ function handleClientGameRoute(url, req, res) {
       return true;
     }
 
-    const { token, session } = createClientGameSession(game, requestUrl.searchParams.get('sessionID'));
+    const { token, session } = createClientGameSession(game, requestedSessionID);
     const base = requestBaseUrl(req);
     const launchPath = `/client-game/sugar-rush/?sessionID=${encodeURIComponent(session.sessionID)}&rgs_url=${encodeURIComponent(base)}&currency=USD&client=1`;
     setClientGameCookie(req, res, token);
