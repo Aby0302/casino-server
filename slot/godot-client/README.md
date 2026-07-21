@@ -44,10 +44,11 @@ Linux builds force CEF to use `ozone-platform=x11` in `project.godot`. Godot can
 still run on Wayland, but CEF's Vulkan accelerated off-screen renderer is not
 compatible with Chromium's Wayland ozone backend on this stack.
 
-The optional full-screen CEF shell defaults to software OSR because
-NVIDIA/Vulkan DMA-BUF accelerated OSR can load the page in CEF while drawing a
-blank Godot texture on some drivers. To retry accelerated OSR for shell
-debugging, run with `CASINO_CEF_ACCELERATED=1` or `-- --cef-accelerated=1`.
+CEF rendering defaults to software OSR because NVIDIA/Vulkan DMA-BUF accelerated
+OSR can load the page in CEF while drawing a blank Godot texture on some drivers.
+This applies to both the 3D slot screen and the optional full-screen CEF shell.
+To retry accelerated OSR for debugging, run with `CASINO_CEF_ACCELERATED=1` or
+`-- --cef-accelerated=1`.
 
 Godot CEF currently ships desktop binaries only (Linux, macOS, Windows). Android
 or iOS store builds need a mobile-native WebView shell instead of this CEF addon.

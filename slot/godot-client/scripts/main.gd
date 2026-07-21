@@ -20,6 +20,7 @@ extends Node3D
 @export var default_bet := 100
 @export var prefer_client_render := true
 @export var client_render_secret := ""
+@export var enable_client_render_accelerated_osr := false
 
 const PROFILE_PATH := "user://player.cfg"
 const MACHINE_CONTROL_LAYER := 4
@@ -1233,7 +1234,7 @@ func _start_client_render(entry: Dictionary, game: String) -> bool:
         return false
 
     texture_obj.set("texture_size", Vector2i(machine_screen_width, machine_screen_height))
-    texture_obj.set("enable_accelerated_osr", true)
+    texture_obj.set("enable_accelerated_osr", _client_render_accelerated_osr())
     texture_obj.set("background_color", Color(0, 0, 0, 1))
     texture_obj.set("popup_policy", 0)
     texture_obj.set("preload_script", _client_render_preload_script())
@@ -1285,6 +1286,23 @@ func _client_render_secret() -> String:
             return arg.substr("--client-render-secret=".length()).strip_edges()
 
     return client_render_secret.strip_edges()
+
+
+func _client_render_accelerated_osr() -> bool:
+    var enabled := _parse_bool(OS.get_environment("CASINO_CEF_ACCELERATED"), enable_client_render_accelerated_osr)
+    for arg in OS.get_cmdline_user_args():
+        if arg.begins_with("--cef-accelerated="):
+            enabled = _parse_bool(arg.substr("--cef-accelerated=".length()), enabled)
+    return enabled
+
+
+func _parse_bool(value: String, fallback: bool) -> bool:
+    var clean := value.strip_edges().to_lower()
+    if clean in ["1", "true", "yes", "on"]:
+        return true
+    if clean in ["0", "false", "no", "off"]:
+        return false
+    return fallback
 
 
 func _client_render_preload_script() -> String:
