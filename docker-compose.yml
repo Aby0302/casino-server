@@ -1,7 +1,7 @@
 services:
   casino:
     build:
-      context: .
+      context: ./slot
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
