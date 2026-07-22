@@ -9,6 +9,7 @@
     "position": [720.5, -236.0, 140.0],
     "lookAt": [620.0, -236.0, -150.0]
   },
+  "teleports": [],
   "machines": [
     {
       "id": "slot_01",

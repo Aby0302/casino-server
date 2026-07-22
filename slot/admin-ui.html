@@ -174,6 +174,7 @@
       <button class="act gold" id="cfgSave">Kaydet</button>
       <button class="act" id="cfgReload">Yeniden Yükle</button>
       <button class="act" id="cfgAddMachine">+ Makine Ekle</button>
+      <button class="act" id="cfgAddTeleport">+ Kapı Teleport</button>
       <button class="act" id="godotEditorOpen">Godot Web Editor Aç</button>
       <label class="muted"><input type="checkbox" id="rawToggle"> Ham JSON</label>
     </div>
@@ -206,7 +207,7 @@
                 <div id="map3dCanvasHost"></div>
                 <div id="map3dStatus">3D editör yükleniyor...</div>
               </div>
-              <div class="map3d-help">Unity kısayolları: W taşı, E döndür, R ölçek, F odak, ok tuşları seçileni taşı, Shift hızlı, Alt hassas, Delete sil, Ctrl+D çoğalt. Hierarchy'den harita, makine, spawn veya alt nesne seçip gizmo eksenlerinden düzenle.</div>
+              <div class="map3d-help">Unity kısayolları: W taşı, E döndür, R ölçek, F odak, ok tuşları seçileni taşı, Shift hızlı, Alt hassas, Delete sil, Ctrl+D çoğalt. Hierarchy'den harita, makine, spawn, kapı teleport veya alt nesne seçip gizmo eksenlerinden düzenle.</div>
             </div>
             <aside class="unity-panel">
               <h3>Inspector</h3>
@@ -225,6 +226,7 @@
             <div id="cfgMapTransform" class="grid3"></div>
           </fieldset>
           <div id="machines"></div>
+          <div id="teleports"></div>
         </div>
       </div>
     </div>
@@ -307,6 +309,7 @@ const map3d = {
   transformDragging: false,
   raycaster: null, pointer: null, dragPlane: null, dragOffset: null,
   machineGroups: [], mapObject: null, spawnGroup: null, editRoot: null, grid: null,
+  teleportGroups: [],
   selectionBox: null, selectionBoxBounds: null,
   editObjects: new Map(),
   modelCache: new Map(), dragging: false, raf: 0, resizeObserver: null,
@@ -579,6 +582,12 @@ const MACHINE_TEMPLATE = () => ({
   lever: { position: [290, 0, 520], rotation: [0, 0, 0], size: [32, 66, 32], shape: 'cylinder' },
 });
 
+const TELEPORT_TEMPLATE = () => ({
+  id: 'door_' + String(Date.now()).slice(-4), enabled: true,
+  position: [0, 70, 0], size: [120, 160, 120],
+  targetPosition: [0, 70, 220], targetLookAt: [0, 70, 320],
+});
+
 const SPAWN_POSITION_KEY = 'spawn:position';
 const SPAWN_LOOK_KEY = 'spawn:lookAt';
 const MAP_KEY = 'map:root';
@@ -592,6 +601,9 @@ const EDIT_PARTS = {
 function machineKey(idx) { return 'machine:' + idx; }
 function machinePartKey(idx, part) { return `machine:${idx}:${part}`; }
 function modelMeshKey(ownerKey, meshName) { return `${ownerKey}:model_mesh:${meshName}`; }
+function teleportKey(idx) { return 'teleport:' + idx; }
+function teleportTargetKey(idx) { return `teleport:${idx}:target`; }
+function teleportLookKey(idx) { return `teleport:${idx}:lookAt`; }
 
 function meshDisplayName(mesh, index) {
   const raw = mesh && mesh.name ? String(mesh.name).trim() : '';
@@ -628,6 +640,17 @@ function ensureMapTransform() {
   return config.mapTransform;
 }
 
+function ensureTeleportDefaults(teleport, idx = 0) {
+  if (!teleport || typeof teleport !== 'object') return teleport;
+  teleport.id = String(teleport.id || ('door_' + (idx + 1)));
+  if (teleport.enabled == null) teleport.enabled = true;
+  ensureVecDefault(teleport, 'position', [0, 70, 0]);
+  ensureVecDefault(teleport, 'size', [120, 160, 120]);
+  ensureVecDefault(teleport, 'targetPosition', [0, 70, 220]);
+  ensureVecDefault(teleport, 'targetLookAt', [0, 70, 320]);
+  return teleport;
+}
+
 function getConfigTarget(key = selectedObjectKey) {
   if (!config) return null;
   const modelMeshMatch = String(key || '').match(/^(map:root|machine:\d+):model_mesh:(.+)$/);
@@ -658,6 +681,25 @@ function getConfigTarget(key = selectedObjectKey) {
   if (key === SPAWN_LOOK_KEY) {
     return { key, kind: 'spawnLookAt', label: 'Spawn Bakış Noktası', object: config.spawn, positionKey: 'lookAt', lockKey: 'lookAtLocked' };
   }
+
+  const teleportMatch = String(key || '').match(/^teleport:(\d+)(?::(target|lookAt))?$/);
+  if (teleportMatch) {
+    config.teleports = Array.isArray(config.teleports) ? config.teleports : [];
+    const idx = Number(teleportMatch[1]);
+    const teleport = config.teleports[idx];
+    if (!teleport) return null;
+    ensureTeleportDefaults(teleport, idx);
+    const suffix = teleportMatch[2] || '';
+    const id = teleport.id || ('Kapı ' + (idx + 1));
+    if (suffix === 'target') {
+      return { key: teleportTargetKey(idx), kind: 'teleportTarget', label: id + ' Hedef Pozisyon', object: teleport, teleportIndex: idx, positionKey: 'targetPosition', lockKey: 'targetLocked' };
+    }
+    if (suffix === 'lookAt') {
+      return { key: teleportLookKey(idx), kind: 'teleportLookAt', label: id + ' Hedef Bakış', object: teleport, teleportIndex: idx, positionKey: 'targetLookAt', lockKey: 'lookAtLocked' };
+    }
+    return { key: teleportKey(idx), kind: 'teleport', label: id, object: teleport, teleportIndex: idx, positionKey: 'position', sizeKey: 'size' };
+  }
+
   const match = String(key || '').match(/^machine:(\d+)(?::([a-zA-Z0-9_]+))?$/);
   if (!match || !Array.isArray(config.machines)) return null;
   const idx = Number(match[1]);
@@ -1003,6 +1045,8 @@ function renderConfig(opts = {}) {
   const rebuild3d = opts.rebuild3d !== false;
   const lists = config.__lists || { models: [], maps: [], audio: [] };
   config.machines = Array.isArray(config.machines) ? config.machines : [];
+  config.teleports = Array.isArray(config.teleports) ? config.teleports : [];
+  config.teleports.forEach((teleport, idx) => ensureTeleportDefaults(teleport, idx));
   if (selectedMachineIndex >= config.machines.length) selectedMachineIndex = Math.max(0, config.machines.length - 1);
   selectedObjectKey = normalizeSelectedObjectKey();
 
@@ -1109,6 +1153,66 @@ function renderConfig(opts = {}) {
 
     host.appendChild(card);
   });
+
+  const teleportHost = $('#teleports');
+  if (teleportHost) {
+    teleportHost.innerHTML = '<h3 style="margin:14px 0 8px">Kapı Teleportları</h3>';
+    config.teleports.forEach((teleport, idx) => {
+      const locked = isTargetLocked(teleportKey(idx));
+      const card = document.createElement('div');
+      const selectedTeleport = selectedObjectKey === teleportKey(idx) || selectedObjectKey.startsWith(teleportKey(idx) + ':');
+      card.className = 'machine' + (selectedTeleport ? ' open selected' : '');
+      const head = document.createElement('div');
+      head.className = 'head';
+      head.innerHTML = `<b>${esc(teleport.id || ('Kapı ' + (idx + 1)))}</b> <span class="muted">${teleport.enabled === false ? 'kapalı' : 'aktif'} · teleport zone</span><span style="flex:1"></span>`;
+      const delBtn = document.createElement('button');
+      delBtn.className = 'act small danger'; delBtn.textContent = 'Sil';
+      delBtn.disabled = locked;
+      delBtn.onclick = e => {
+        e.stopPropagation();
+        if (locked) { toast('Teleport kilitli; önce kilidi açın', true); return; }
+        deleteSelectedTeleport(getConfigTarget(teleportKey(idx)));
+      };
+      head.appendChild(delBtn);
+      head.onclick = () => { setSelectedObject(teleportKey(idx), { focus: true }); card.classList.toggle('open'); };
+      card.appendChild(head);
+
+      const body = document.createElement('div');
+      body.className = 'body';
+      const top = document.createElement('div');
+      top.className = 'row';
+      top.append('ID: ');
+      const idInp = document.createElement('input');
+      idInp.value = teleport.id || ''; idInp.style.width = '120px'; idInp.disabled = locked;
+      idInp.oninput = () => { if (locked) return; teleport.id = idInp.value; markConfigChanged(); };
+      top.appendChild(idInp);
+      const enabledLabel = document.createElement('label');
+      enabledLabel.className = 'muted';
+      const enabledInp = document.createElement('input');
+      enabledInp.type = 'checkbox'; enabledInp.checked = teleport.enabled !== false; enabledInp.disabled = locked;
+      enabledInp.onchange = () => { if (locked) return; teleport.enabled = enabledInp.checked; markConfigChanged(); };
+      enabledLabel.append(enabledInp, ' Aktif');
+      top.appendChild(enabledLabel);
+      body.appendChild(top);
+
+      const grid = document.createElement('div');
+      grid.className = 'grid3';
+      grid.appendChild(vecFieldset('Kapı pozisyonu', teleport, 'position', 3, locked));
+      grid.appendChild(vecFieldset('Kapı boyutu', teleport, 'size', 3, locked));
+      grid.appendChild(vecFieldset('Hedef pozisyon', teleport, 'targetPosition', 3, isTargetLocked(teleportTargetKey(idx))));
+      grid.appendChild(vecFieldset('Hedef bakış', teleport, 'targetLookAt', 3, isTargetLocked(teleportLookKey(idx))));
+      body.appendChild(grid);
+      card.appendChild(body);
+      teleportHost.appendChild(card);
+    });
+    if (!config.teleports.length) {
+      const empty = document.createElement('div');
+      empty.className = 'muted';
+      empty.style.padding = '8px 0 0';
+      empty.textContent = '+ Kapı Teleport ile kapı bölgesi ve hedef iç mekan noktası ekleyin.';
+      teleportHost.appendChild(empty);
+    }
+  }
   syncRaw();
   refreshMachinePicker();
   refreshHierarchy();
@@ -1217,6 +1321,13 @@ function refreshHierarchy() {
     button(SPAWN_POSITION_KEY, '◎ Spawn pozisyonu', 'config.spawn.position'),
     button(SPAWN_LOOK_KEY, '⌖ Spawn bakış noktası', 'config.spawn.lookAt'),
   ];
+  (config.teleports || []).forEach((teleport, idx) => {
+    ensureTeleportDefaults(teleport, idx);
+    const id = teleport.id || ('Kapı ' + (idx + 1));
+    rows.push(button(teleportKey(idx), '▧ ' + id, `${teleport.enabled === false ? 'kapalı' : 'aktif'} · zone`));
+    rows.push(button(teleportTargetKey(idx), '⟶ ' + id + ' hedef', 'teleport.targetPosition', true));
+    rows.push(button(teleportLookKey(idx), '⌖ ' + id + ' bakış', 'teleport.targetLookAt', true));
+  });
   if (modelEditMode && modelEditTargetKey === MAP_KEY) {
     modelEditSubMeshes.forEach(({ name, key, partKey }) => {
       if (isTargetDeleted(key)) return;
@@ -1283,6 +1394,22 @@ function update3DInspector() {
     inspectorLockRow(host, target);
     inspectorVecRow(host, 'Position', config.spawn, 'position', 3, isTargetLocked(SPAWN_POSITION_KEY));
     inspectorVecRow(host, 'Look At', config.spawn, 'lookAt', 3, isTargetLocked(SPAWN_LOOK_KEY));
+    return;
+  }
+
+  if (target.kind === 'teleport' || target.kind === 'teleportTarget' || target.kind === 'teleportLookAt') {
+    const teleport = target.object;
+    const idx = target.teleportIndex;
+    const locked = isTargetLocked(target);
+    title.innerHTML = `<b>${esc(target.label)}</b><div class="muted">Kapı bölgesi oyuncuyu hedef pozisyona ışınlar</div>`;
+    host.appendChild(title);
+    inspectorLockRow(host, target);
+    inspectorTextRow(host, 'ID', teleport.id || '', value => { teleport.id = value; syncRaw(); refreshHierarchy(); }, isTargetLocked(teleportKey(idx)));
+    inspectorCheckboxRow(host, 'Aktif', teleport.enabled !== false, value => { teleport.enabled = value; syncRaw(); refreshHierarchy(); update3DSelection(); }, isTargetLocked(teleportKey(idx)));
+    inspectorVecRow(host, 'Kapı Position', teleport, 'position', 3, isTargetLocked(teleportKey(idx)));
+    inspectorVecRow(host, 'Kapı Size', teleport, 'size', 3, isTargetLocked(teleportKey(idx)));
+    inspectorVecRow(host, 'Hedef Position', teleport, 'targetPosition', 3, isTargetLocked(teleportTargetKey(idx)));
+    inspectorVecRow(host, 'Hedef Look At', teleport, 'targetLookAt', 3, isTargetLocked(teleportLookKey(idx)));
     return;
   }
 
@@ -1397,6 +1524,18 @@ function inspectorNumberRow(host, label, value, onInput, disabled = false) {
   inp.disabled = disabled;
   inp.oninput = () => { if (disabled) return; onInput(Number(inp.value) || 0); };
   row.appendChild(inp);
+  host.appendChild(row);
+}
+
+function inspectorCheckboxRow(host, label, value, onChange, disabled = false) {
+  const row = inspectorRow(label);
+  const wrap = document.createElement('label');
+  wrap.className = 'muted';
+  const inp = document.createElement('input');
+  inp.type = 'checkbox'; inp.checked = Boolean(value); inp.disabled = disabled;
+  inp.onchange = () => { if (disabled) return; onChange(inp.checked); };
+  wrap.append(inp, ' Aktif');
+  row.appendChild(wrap);
   host.appendChild(row);
 }
 
@@ -1554,6 +1693,7 @@ async function rebuild3DScene() {
   clear3DObject(map3d.editRoot); map3d.editRoot = null;
   map3d.spawnGroup = null;
   map3d.machineGroups = [];
+  map3d.teleportGroups = [];
   map3d.editObjects = new Map();
   clear3DObject(map3d.grid); map3d.grid = null;
 
@@ -1587,6 +1727,7 @@ async function rebuild3DScene() {
     map3d.editRoot.add(group);
   }
   buildSpawn3D();
+  buildTeleports3D();
   update3DTransforms();
   update3DSelection();
   reset3DCamera(false);
@@ -1729,6 +1870,7 @@ function update3DTransforms(opts = {}) {
     updateMachinePart3D(group, machine, idx, opts);
   });
   updateSpawn3D();
+  updateTeleports3D();
   update3DSelection();
 }
 
@@ -1836,6 +1978,101 @@ function updateSpawn3D() {
   ]);
 }
 
+function buildTeleports3D() {
+  if (!map3d.editRoot || !config || !map3d.THREE) return;
+  config.teleports = Array.isArray(config.teleports) ? config.teleports : [];
+  map3d.teleportGroups = [];
+  config.teleports.forEach((teleport, idx) => {
+    const group = createTeleport3D(teleport, idx);
+    map3d.teleportGroups.push(group);
+    map3d.editRoot.add(group);
+  });
+}
+
+function createTeleport3D(teleport, idx) {
+  const THREE = map3d.THREE;
+  ensureTeleportDefaults(teleport, idx);
+  const group = new THREE.Group();
+  group.userData.teleportIndex = idx;
+
+  const zone = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshStandardMaterial({ color: 0xff8a2a, transparent: true, opacity: .24, roughness: .52, side: THREE.DoubleSide })
+  );
+  zone.userData.baseColor = 0xff8a2a;
+  zone.userData.baseOpacity = .24;
+  zone.name = `${teleport.id || 'teleport'}_zone`;
+  group.userData.zone = registerEditObject(teleportKey(idx), zone, { kind: 'teleport', teleportIndex: idx });
+
+  const target = new THREE.Mesh(
+    new THREE.SphereGeometry(18, 20, 10),
+    new THREE.MeshBasicMaterial({ color: 0xf472b6 })
+  );
+  target.userData.baseColor = 0xf472b6;
+  target.userData.baseOpacity = 1;
+  target.name = `${teleport.id || 'teleport'}_target`;
+  group.userData.target = registerEditObject(teleportTargetKey(idx), target, { kind: 'teleportTarget', teleportIndex: idx });
+
+  const lookTarget = new THREE.Mesh(
+    new THREE.SphereGeometry(12, 18, 8),
+    new THREE.MeshBasicMaterial({ color: 0xa78bfa })
+  );
+  lookTarget.userData.baseColor = 0xa78bfa;
+  lookTarget.userData.baseOpacity = 1;
+  lookTarget.name = `${teleport.id || 'teleport'}_lookAt`;
+  group.userData.lookTarget = registerEditObject(teleportLookKey(idx), lookTarget, { kind: 'teleportLookAt', teleportIndex: idx });
+
+  const line = new THREE.Line(
+    new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({ color: 0xf472b6 })
+  );
+  group.userData.line = line;
+  group.add(zone, target, lookTarget, line);
+  updateTeleport3D(idx);
+  return group;
+}
+
+function updateTeleports3D() {
+  if (!config || !map3d.THREE) return;
+  config.teleports = Array.isArray(config.teleports) ? config.teleports : [];
+  if (map3d.teleportGroups.length !== config.teleports.length) {
+    rebuild3DScene();
+    return;
+  }
+  config.teleports.forEach((_, idx) => updateTeleport3D(idx));
+}
+
+function updateTeleport3D(idx) {
+  const group = map3d.teleportGroups[idx];
+  const teleport = config && config.teleports && config.teleports[idx];
+  if (!group || !teleport || !map3d.THREE) return;
+  ensureTeleportDefaults(teleport, idx);
+  const THREE = map3d.THREE;
+  const zone = group.userData.zone;
+  const target = group.userData.target;
+  const lookTarget = group.userData.lookTarget;
+  const line = group.userData.line;
+  const p = ensureVec(teleport, 'position', 3);
+  const size = ensureVec(teleport, 'size', 3);
+  const tp = ensureVec(teleport, 'targetPosition', 3);
+  const tl = ensureVec(teleport, 'targetLookAt', 3);
+  map3d.suppressTransformSync = true;
+  if (zone) {
+    zone.position.set(p[0], p[1], p[2]);
+    zone.scale.set(Math.max(1, Number(size[0]) || 1), Math.max(1, Number(size[1]) || 1), Math.max(1, Number(size[2]) || 1));
+    zone.visible = true;
+  }
+  if (target) target.position.set(tp[0], tp[1], tp[2]);
+  if (lookTarget) lookTarget.position.set(tl[0], tl[1], tl[2]);
+  if (line) {
+    line.geometry.setFromPoints([
+      new THREE.Vector3(tp[0], tp[1], tp[2]),
+      new THREE.Vector3(tl[0], tl[1], tl[2]),
+    ]);
+  }
+  map3d.suppressTransformSync = false;
+}
+
 function update3DSelection() {
   selectedObjectKey = normalizeSelectedObjectKey();
   const selectedTarget = getConfigTarget(selectedObjectKey);
@@ -1873,6 +2110,17 @@ function update3DSelection() {
     setEditObjectHighlight(map3d.spawnGroup.userData.sphere, selectedObjectKey === SPAWN_POSITION_KEY);
     setEditObjectHighlight(map3d.spawnGroup.userData.lookTarget, selectedObjectKey === SPAWN_LOOK_KEY);
   }
+  map3d.teleportGroups.forEach((group, idx) => {
+    const teleport = config && config.teleports && config.teleports[idx];
+    if (!group || !teleport) return;
+    setEditObjectHighlight(group.userData.zone, selectedObjectKey === teleportKey(idx));
+    setEditObjectHighlight(group.userData.target, selectedObjectKey === teleportTargetKey(idx));
+    setEditObjectHighlight(group.userData.lookTarget, selectedObjectKey === teleportLookKey(idx));
+    if (group.userData.zone && group.userData.zone.material && selectedObjectKey !== teleportKey(idx)) {
+      group.userData.zone.material.opacity = teleport.enabled === false ? .08 : (group.userData.zone.userData.baseOpacity || .24);
+      group.userData.zone.material.needsUpdate = true;
+    }
+  });
   updateSelectionBox(selectedTarget);
   attachTransformControl();
 }
@@ -1992,6 +2240,7 @@ function onTransformObjectChange() {
       target.object[target.sizeKey || target.radiusKey] = [object.scale.x, object.scale.y, object.scale.z].map(n => Number(n.toFixed(2)));
     }
     updateSpawn3D();
+    if (target.kind === 'teleport' || target.kind === 'teleportTarget' || target.kind === 'teleportLookAt') updateTeleport3D(target.teleportIndex);
   }
   syncRaw();
   updateSelectionBox(target);
@@ -2015,6 +2264,32 @@ function duplicateSelectedMachine() {
   selectedObjectKey = machineKey(selectedMachineIndex);
   renderConfig();
   toast('Makine çoğaltıldı');
+}
+
+function duplicateSelectedTeleport(target = getConfigTarget(selectedObjectKey)) {
+  if (target && (target.kind === 'teleportTarget' || target.kind === 'teleportLookAt')) target = getConfigTarget(teleportKey(target.teleportIndex));
+  if (!target || target.kind !== 'teleport') { toast('Çoğaltmak için kapı teleport bölgesini seçin', true); return false; }
+  if (isTargetLocked(target)) { toast('Teleport kilitli; önce kilidi açın', true); return true; }
+  config.teleports = Array.isArray(config.teleports) ? config.teleports : [];
+  const copy = JSON.parse(JSON.stringify(config.teleports[target.teleportIndex] || TELEPORT_TEMPLATE()));
+  copy.id = uniqueTeleportId(copy.id || 'door');
+  const p = ensureVec(copy, 'position', 3);
+  const tp = ensureVec(copy, 'targetPosition', 3);
+  const tl = ensureVec(copy, 'targetLookAt', 3);
+  p[0] += 120; p[2] += 120;
+  tp[0] += 120; tp[2] += 120;
+  tl[0] += 120; tl[2] += 120;
+  config.teleports.push(copy);
+  selectedObjectKey = teleportKey(config.teleports.length - 1);
+  renderConfig();
+  toast('Teleport çoğaltıldı');
+  return true;
+}
+
+function duplicateSelectedObject() {
+  const target = getConfigTarget(selectedObjectKey);
+  if (target && (target.kind === 'teleport' || target.kind === 'teleportTarget' || target.kind === 'teleportLookAt')) { duplicateSelectedTeleport(target); return; }
+  duplicateSelectedMachine();
 }
 
 function deleteSelectedModelMesh(target = getConfigTarget(selectedObjectKey)) {
@@ -2054,9 +2329,24 @@ function deleteSelectedMap(target = getConfigTarget(selectedObjectKey)) {
   config.map = '';
   delete config.mapTransform;
   delete config.mapParts;
+  config.teleports = [];
   selectedObjectKey = config.machines && config.machines[selectedMachineIndex] ? machineKey(selectedMachineIndex) : SPAWN_POSITION_KEY;
   renderConfig();
   toast('Harita silindi');
+  return true;
+}
+
+function deleteSelectedTeleport(target = getConfigTarget(selectedObjectKey)) {
+  if (!target || (target.kind !== 'teleport' && target.kind !== 'teleportTarget' && target.kind !== 'teleportLookAt')) return false;
+  const idx = target.teleportIndex;
+  const teleport = config && config.teleports && config.teleports[idx];
+  if (!teleport) return false;
+  if (isTargetLocked(teleportKey(idx))) { toast('Teleport kilitli; önce kilidi açın', true); return true; }
+  if (!confirm((teleport.id || 'Teleport') + ' silinsin mi?')) return true;
+  config.teleports.splice(idx, 1);
+  selectedObjectKey = config.teleports[idx] ? teleportKey(idx) : (config.teleports[idx - 1] ? teleportKey(idx - 1) : SPAWN_POSITION_KEY);
+  renderConfig();
+  toast('Teleport silindi');
   return true;
 }
 
@@ -2064,7 +2354,8 @@ function deleteSelectedMachine() {
   const target = getConfigTarget(selectedObjectKey);
   if (target && target.kind === 'modelMesh') { deleteSelectedModelMesh(target); return; }
   if (target && target.kind === 'map') { deleteSelectedMap(target); return; }
-  if (!target || target.kind !== 'machine') { toast('Silmek için harita, makine gövdesi veya model parçası seçin', true); return; }
+  if (target && (target.kind === 'teleport' || target.kind === 'teleportTarget' || target.kind === 'teleportLookAt')) { deleteSelectedTeleport(target); return; }
+  if (!target || target.kind !== 'machine') { toast('Silmek için harita, makine gövdesi, teleport veya model parçası seçin', true); return; }
   if (isTargetLocked(target)) { toast('Makine kilitli; önce kilidi açın', true); return; }
   selectedMachineIndex = target.machineIndex;
   if (!config || selectedMachineIndex < 0 || !config.machines[selectedMachineIndex]) return;
@@ -2080,6 +2371,14 @@ function deleteSelectedMachine() {
 function uniqueMachineId(base) {
   const stem = String(base).replace(/_copy\d*$/, '') + '_copy';
   const used = new Set((config.machines || []).map(m => m.id));
+  let i = 1;
+  while (used.has(stem + i)) i++;
+  return stem + i;
+}
+
+function uniqueTeleportId(base) {
+  const stem = String(base).replace(/_copy\d*$/, '') + '_copy';
+  const used = new Set((config.teleports || []).map(t => t.id));
   let i = 1;
   while (used.has(stem + i)) i++;
   return stem + i;
@@ -2149,7 +2448,7 @@ function handle3DShortcuts(e) {
   if (e.key === 'f' || e.key === 'F') { focusSelectedObject(); e.preventDefault(); }
   if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelectedMachine(); e.preventDefault(); }
   if (!modelEditMode) {
-    if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) { duplicateSelectedMachine(); e.preventDefault(); }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) { duplicateSelectedObject(); e.preventDefault(); }
   }
 }
 
@@ -2350,7 +2649,7 @@ document.querySelectorAll('[data-map3d-tool]').forEach(btn => {
 });
 $('#map3dFocus').onclick = () => focusSelectedObject();
 $('#map3dResetCamera').onclick = () => reset3DCamera();
-$('#map3dDuplicate').onclick = () => duplicateSelectedMachine();
+$('#map3dDuplicate').onclick = () => duplicateSelectedObject();
 $('#map3dDelete').onclick = () => deleteSelectedMachine();
 $('#map3dSnap').onchange = () => applyTransformToolSettings();
 $('#map3dSnapValue').oninput = () => applyTransformToolSettings();
@@ -2363,6 +2662,12 @@ $('#cfgAddMachine').onclick = () => {
   config.machines = config.machines || [];
   config.machines.push(MACHINE_TEMPLATE());
   selectedMachineIndex = config.machines.length - 1;
+  renderConfig();
+};
+$('#cfgAddTeleport').onclick = () => {
+  config.teleports = Array.isArray(config.teleports) ? config.teleports : [];
+  config.teleports.push(TELEPORT_TEMPLATE());
+  selectedObjectKey = teleportKey(config.teleports.length - 1);
   renderConfig();
 };
 $('#cfgReload').onclick = () => { loadConfig(); toast('Yeniden yüklendi'); };

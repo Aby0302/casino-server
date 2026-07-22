@@ -32,6 +32,7 @@ const UI_PANEL_STRONG := Color(0.060, 0.032, 0.095, 0.94)
 const UI_GOLD := Color(1.0, 0.710, 0.230, 1.0)
 const UI_PINK := Color(0.980, 0.180, 0.470, 1.0)
 const UI_CYAN := Color(0.250, 0.850, 1.0, 1.0)
+const TELEPORT_COOLDOWN_MS := 1200
 
 var config_request: HTTPRequest
 var map_request: HTTPRequest
@@ -97,6 +98,9 @@ var _touch_look_dx := 0.0
 var _touch_look_dy := 0.0
 var hot_reload_in_progress := false
 var _hot_reload_target_machines := 0
+var teleports: Array = []
+var active_teleport_id := ""
+var last_teleport_time_ms := 0
 
 
 func _ready() -> void:
@@ -180,6 +184,7 @@ func _physics_process(delta: float) -> void:
     player_body.velocity = velocity
     player_body.move_and_slide()
     _keep_player_on_floor()
+    _check_teleports()
 
     _update_interaction_prompt()
 
@@ -650,6 +655,7 @@ func _load_remote_config() -> void:
 func _hot_reload_config() -> void:
     set_status("Config hot reload baslatiliyor...")
     _clear_machines()
+    _clear_teleports()
     map_collider_count = 0
     world_colliders_ready = false
     if config_request != null:
@@ -694,6 +700,7 @@ func _on_config_response(result: int, response_code: int, _headers: PackedString
         var machines_value: Variant = config.get("machines", [])
         _hot_reload_target_machines = machines_value.size() if typeof(machines_value) == TYPE_ARRAY else 0
     _apply_spawn(config)
+    _apply_teleports(config)
     _download_map(String(config.get("map", "")), config)
 
 
@@ -740,6 +747,91 @@ func _set_player_pose(position: Vector3, look_at: Vector3) -> void:
 
 func _current_eye_position() -> Vector3:
     return player_body.global_position + Vector3(0.0, player_eye_height, 0.0)
+
+
+func _clear_teleports() -> void:
+    teleports.clear()
+    active_teleport_id = ""
+    last_teleport_time_ms = 0
+
+
+func _apply_teleports(config: Dictionary) -> void:
+    _clear_teleports()
+    var teleports_value: Variant = config.get("teleports", [])
+    if typeof(teleports_value) != TYPE_ARRAY:
+        return
+
+    var teleport_list: Array = teleports_value
+    for idx in range(teleport_list.size()):
+        var entry_value: Variant = teleport_list[idx]
+        if typeof(entry_value) != TYPE_DICTIONARY:
+            continue
+
+        var entry: Dictionary = entry_value
+        var center := _to_vector3(entry.get("position", []), Vector3.ZERO)
+        var target_position := _to_vector3(entry.get("targetPosition", []), center)
+        var target_look_at := _to_vector3(entry.get("targetLookAt", []), target_position + Vector3.FORWARD * 100.0)
+        teleports.append({
+            "id": String(entry.get("id", "teleport_%d" % idx)),
+            "enabled": bool(entry.get("enabled", true)),
+            "position": center,
+            "size": _positive_vector3(_to_vector3(entry.get("size", []), Vector3(120.0, 160.0, 120.0)), Vector3(120.0, 160.0, 120.0)),
+            "target_position": target_position,
+            "target_look_at": target_look_at,
+        })
+
+    if not teleports.is_empty():
+        print("Loaded %s teleport zones" % teleports.size())
+
+
+func _positive_vector3(value: Vector3, fallback: Vector3) -> Vector3:
+    return Vector3(
+        max(1.0, absf(value.x)) if value.x != 0.0 else fallback.x,
+        max(1.0, absf(value.y)) if value.y != 0.0 else fallback.y,
+        max(1.0, absf(value.z)) if value.z != 0.0 else fallback.z
+    )
+
+
+func _check_teleports() -> void:
+    if teleports.is_empty() or player_body == null:
+        return
+
+    var eye_position := _current_eye_position()
+    var matched: Dictionary = {}
+    for teleport_value in teleports:
+        var teleport: Dictionary = teleport_value
+        if not bool(teleport.get("enabled", true)):
+            continue
+        var teleport_position: Vector3 = teleport.get("position", Vector3.ZERO)
+        var teleport_size: Vector3 = teleport.get("size", Vector3.ONE)
+        if _point_inside_box(eye_position, teleport_position, teleport_size):
+            matched = teleport
+            break
+
+    if matched.is_empty():
+        active_teleport_id = ""
+        return
+
+    var teleport_id := String(matched.get("id", "teleport"))
+    if active_teleport_id == teleport_id:
+        return
+
+    var now := Time.get_ticks_msec()
+    if now - last_teleport_time_ms < TELEPORT_COOLDOWN_MS:
+        active_teleport_id = teleport_id
+        return
+
+    active_teleport_id = teleport_id
+    last_teleport_time_ms = now
+    var target_position: Vector3 = matched.get("target_position", eye_position)
+    var target_look_at: Vector3 = matched.get("target_look_at", eye_position + Vector3.FORWARD * 100.0)
+    _set_player_pose(target_position, target_look_at)
+    set_status("Teleport: %s" % teleport_id)
+
+
+func _point_inside_box(point: Vector3, center: Vector3, size: Vector3) -> bool:
+    var half := size * 0.5
+    return absf(point.x - center.x) <= half.x and absf(point.y - center.y) <= half.y and absf(point.z - center.z) <= half.z
 
 
 func _snap_body_position_to_floor(reference_eye_position: Vector3, fallback_body_position: Vector3) -> Vector3:
@@ -1089,6 +1181,8 @@ func _add_static_colliders(root: Node) -> int:
         if mesh != null:
             var shape := mesh.create_trimesh_shape()
             if shape != null:
+                if shape is ConcavePolygonShape3D:
+                    (shape as ConcavePolygonShape3D).backface_collision = true
                 var body := StaticBody3D.new()
                 body.name = "%s_StaticBody" % mesh_instance.name
                 body.collision_layer = 1
