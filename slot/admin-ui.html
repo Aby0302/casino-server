@@ -2491,7 +2491,8 @@ async function refreshAll() {
 }
 
 // Oturum var mı kontrolü
-api('/admin/api/players').then(() => {
+api('/admin/api/session').then(body => {
+  if (!body.authenticated) return;
   $('#login').style.display = 'none';
   $('#logoutBtn').style.display = '';
   refreshAll();

@@ -421,6 +421,10 @@ function handleAdminRoute(req, res, ctx) {
       return json(res, 200, { ok: true, token });
     }
 
+    if (req.method === 'GET' && pathname === '/admin/api/session') {
+      return json(res, 200, { ok: true, authenticated: isAuthorized(req) });
+    }
+
     if (!isAuthorized(req)) {
       return json(res, 401, { ok: false, error: 'Giris gerekli' });
     }

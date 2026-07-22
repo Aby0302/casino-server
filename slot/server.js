@@ -570,6 +570,11 @@ const server = http.createServer((req, res) => {
     return serveStatic(SLOT_DIR, 'lobby.html', res, { 'Cache-Control': 'no-cache' });
   }
 
+  if (url === '/favicon.ico') {
+    res.writeHead(204, { 'Cache-Control': 'public, max-age=86400' });
+    return res.end();
+  }
+
   // Game routes: serve directly to all clients (no cloud redirect)
   // Cloud streaming remains available at /cloud/* for legacy clients
   if (url === '/sugar-rush' || url === '/sugar-rush/' || url.startsWith('/sugar-rush/')) {
