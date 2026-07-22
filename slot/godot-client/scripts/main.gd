@@ -819,7 +819,9 @@ func _remember_safe_position(position: Vector3) -> void:
 
 func _download_map(map_name: String, config: Dictionary) -> void:
     if map_name.is_empty():
-        set_status("Config has no map")
+        _clear_map()
+        set_status("Loaded config without map")
+        _download_machines(config.get("machines", []))
         return
 
     var local_asset_path := _local_asset_path("maps", map_name)
@@ -853,8 +855,7 @@ func _on_map_downloaded(result: int, response_code: int, _headers: PackedStringA
 
 
 func _load_map_from_path(config: Dictionary, local_path: String) -> void:
-    if world_root.get_node_or_null("CasinoLobby") != null:
-        world_root.get_node("CasinoLobby").queue_free()
+    _clear_map()
 
     var map_node: Node = null
     if local_path.ends_with(".tscn"):
@@ -893,6 +894,15 @@ func _load_map_from_path(config: Dictionary, local_path: String) -> void:
 
     set_status("Loaded map: %s (%s colliders)" % [local_path, map_collider_count])
     _download_machines(config.get("machines", []))
+
+
+func _clear_map() -> void:
+    if world_root != null:
+        var existing := world_root.get_node_or_null("CasinoLobby")
+        if existing != null and not existing.is_queued_for_deletion():
+            existing.queue_free()
+    map_collider_count = 0
+    world_colliders_ready = false
 
 
 func _apply_map_transform(map_node: Node, config: Dictionary) -> void:

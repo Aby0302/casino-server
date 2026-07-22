@@ -495,17 +495,24 @@ $('#uploadBtn').onclick = () => {
   const dir = $('#fileDir').value;
   const xhr = new XMLHttpRequest();
   const prog = $('#uploadProg');
+  xhr.withCredentials = true;
+  xhr.timeout = 30 * 60 * 1000;
   prog.style.display = ''; prog.value = 0;
   xhr.upload.onprogress = e => { if (e.lengthComputable) prog.value = (e.loaded / e.total) * 100; };
   xhr.onload = () => {
     prog.style.display = 'none';
+    const raw = xhr.responseText || '';
+    let body = {};
     try {
-      const body = JSON.parse(xhr.responseText);
-      if (body.ok) { toast('Yüklendi: ' + file.name); loadFiles(); }
-      else toast(body.error || 'Yükleme hatası', true);
-    } catch (e) { toast('Yükleme hatası', true); }
+      body = raw ? JSON.parse(raw) : {};
+    } catch (e) {}
+    if (xhr.status === 401) { $('#login').style.display = 'flex'; toast('Giriş gerekli', true); return; }
+    if (xhr.status >= 200 && xhr.status < 300 && body.ok) { toast('Yüklendi: ' + file.name); loadFiles(); return; }
+    const detail = body.error || raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220) || 'Sunucu cevap vermedi';
+    toast(`Yükleme hatası (${xhr.status || 'ağ'}): ${detail}`, true);
   };
-  xhr.onerror = () => { prog.style.display = 'none'; toast('Yükleme hatası', true); };
+  xhr.onerror = () => { prog.style.display = 'none'; toast('Yükleme hatası: bağlantı koptu veya proxy reddetti', true); };
+  xhr.ontimeout = () => { prog.style.display = 'none'; toast('Yükleme zaman aşımına uğradı', true); };
   xhr.open('POST', `/admin/api/files/upload?dir=${encodeURIComponent(dir)}&name=${encodeURIComponent(file.name)}`);
   xhr.send(file);
 };
@@ -948,7 +955,7 @@ function renderConfig(opts = {}) {
   if (selectedMachineIndex >= config.machines.length) selectedMachineIndex = Math.max(0, config.machines.length - 1);
   selectedObjectKey = normalizeSelectedObjectKey();
 
-  const mapSel = selectInput(lists.maps.filter(n => n.endsWith('.glb')), config.map, v => config.map = v, true);
+  const mapSel = selectInput(lists.maps.filter(n => n.endsWith('.glb')), config.map, v => config.map = v, true, 'Harita yok');
   $('#cfgMap').replaceWith(mapSel); mapSel.id = 'cfgMap';
   const mapTransform = ensureMapTransform();
   const mapLocked = isTargetLocked(MAP_KEY);
@@ -1213,7 +1220,7 @@ function update3DInspector() {
     title.innerHTML = `<b>${esc(target.label)}</b><div class="muted">${esc(config.map || 'Harita seçilmedi')} · config.mapTransform</div>`;
     host.appendChild(title);
     inspectorLockRow(host, target);
-    inspectorSelectRow(host, 'Harita Dosyası', lists.maps || [], config.map || '', value => { config.map = value; syncRaw(); refreshHierarchy(); rebuild3DScene(); }, '', locked);
+    inspectorSelectRow(host, 'Harita Dosyası', lists.maps || [], config.map || '', value => { config.map = value; syncRaw(); refreshHierarchy(); rebuild3DScene(); }, 'Harita yok', locked);
     inspectorVecRow(host, 'Position', target.object, 'position', 3, locked);
     inspectorVecRow(host, 'Rotation', target.object, 'rotation', 3, locked);
     inspectorVecRow(host, 'Scale', target.object, 'scale', 3, locked);
@@ -1984,10 +1991,27 @@ function deleteSelectedModelMesh(target = getConfigTarget(selectedObjectKey)) {
   return true;
 }
 
+function deleteSelectedMap(target = getConfigTarget(selectedObjectKey)) {
+  if (!target || target.kind !== 'map') return false;
+  if (isTargetLocked(target)) { toast('Harita kilitli; önce kilidi açın', true); return true; }
+  if (!config || !config.map) { toast('Silinecek harita yok', true); return true; }
+  const name = config.map;
+  if (!confirm(name + ' haritadan kaldırılsın mı?')) return true;
+  if (modelEditMode) exitModelEditMode();
+  config.map = '';
+  delete config.mapTransform;
+  delete config.mapParts;
+  selectedObjectKey = config.machines && config.machines[selectedMachineIndex] ? machineKey(selectedMachineIndex) : SPAWN_POSITION_KEY;
+  renderConfig();
+  toast('Harita silindi');
+  return true;
+}
+
 function deleteSelectedMachine() {
   const target = getConfigTarget(selectedObjectKey);
   if (target && target.kind === 'modelMesh') { deleteSelectedModelMesh(target); return; }
-  if (!target || target.kind !== 'machine') { toast('Silmek için makine gövdesi veya model parçası seçin', true); return; }
+  if (target && target.kind === 'map') { deleteSelectedMap(target); return; }
+  if (!target || target.kind !== 'machine') { toast('Silmek için harita, makine gövdesi veya model parçası seçin', true); return; }
   if (isTargetLocked(target)) { toast('Makine kilitli; önce kilidi açın', true); return; }
   selectedMachineIndex = target.machineIndex;
   if (!config || selectedMachineIndex < 0 || !config.machines[selectedMachineIndex]) return;

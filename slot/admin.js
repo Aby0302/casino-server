@@ -10,7 +10,8 @@ const DEFAULT_CONFIG_FILE = path.join(__dirname, 'casino-config.json');
 const CONFIG_FILE = path.join(DATA_DIR, 'casino-config.json');
 const GODOT_EDITOR_DIR = path.join(__dirname, 'godot-web-editor', 'latest');
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
-const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
+const DEFAULT_MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = Math.max(1, Number(process.env.ADMIN_MAX_UPLOAD_BYTES) || DEFAULT_MAX_UPLOAD_BYTES);
 const DEFAULT_PLAYER_BALANCE = 10000;
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || (() => {
@@ -352,6 +353,14 @@ function sanitizeFileName(value) {
   return name;
 }
 
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${value} B`;
+}
+
 function resolveRoot(dirParam) {
   return ensureFileRoot(dirParam);
 }
@@ -490,32 +499,43 @@ function handleAdminRoute(req, res, ctx) {
       const root = resolveRoot(requestUrl.searchParams.get('dir'));
       const name = sanitizeFileName(requestUrl.searchParams.get('name'));
       if (!root || !name) return json(res, 400, { ok: false, error: 'Gecersiz klasor veya dosya adi' });
+      const contentLength = Number(req.headers['content-length'] || 0);
+      if (Number.isFinite(contentLength) && contentLength > MAX_UPLOAD_BYTES) {
+        req.resume();
+        return json(res, 413, { ok: false, error: `Dosya cok buyuk. Maksimum ${formatBytes(MAX_UPLOAD_BYTES)}.` });
+      }
       fs.mkdirSync(root, { recursive: true });
 
       const target = path.join(root, name);
       const tmp = `${target}.uploading-${crypto.randomBytes(4).toString('hex')}`;
       const stream = fs.createWriteStream(tmp);
       let received = 0;
-      let aborted = false;
+      let tooLarge = false;
 
       await new Promise((resolve, reject) => {
         req.on('data', chunk => {
           received += chunk.length;
-          if (received > MAX_UPLOAD_BYTES && !aborted) {
-            aborted = true;
+          if (tooLarge) return;
+          if (received > MAX_UPLOAD_BYTES) {
+            tooLarge = true;
             stream.destroy();
             fs.unlink(tmp, () => {});
-            req.destroy();
-            reject(new Error('Dosya cok buyuk'));
             return;
           }
-          stream.write(chunk);
+          if (!stream.write(chunk)) {
+            req.pause();
+            stream.once('drain', () => req.resume());
+          }
         });
-        req.on('end', () => stream.end(resolve));
+        req.on('end', () => {
+          if (tooLarge) return resolve();
+          stream.end(resolve);
+        });
         req.on('error', reject);
-        stream.on('error', reject);
+        stream.on('error', err => { if (!tooLarge) reject(err); });
       });
 
+      if (tooLarge) return json(res, 413, { ok: false, error: `Dosya cok buyuk. Maksimum ${formatBytes(MAX_UPLOAD_BYTES)}.` });
       fs.renameSync(tmp, target);
       return json(res, 200, { ok: true, name, size: received });
     }
@@ -541,7 +561,7 @@ function handleAdminRoute(req, res, ctx) {
       const body = await readJsonBody(req);
       const config = body.config;
       if (!config || typeof config !== 'object') return json(res, 400, { ok: false, error: 'config alani gerekli' });
-      if (typeof config.map !== 'string' || !config.map) return json(res, 400, { ok: false, error: 'map alani gerekli' });
+      if (typeof config.map !== 'string') return json(res, 400, { ok: false, error: 'map string olmali' });
       if (!Array.isArray(config.machines)) return json(res, 400, { ok: false, error: 'machines bir dizi olmali' });
       for (const machine of config.machines) {
         if (!machine || typeof machine.id !== 'string' || !machine.id) {
