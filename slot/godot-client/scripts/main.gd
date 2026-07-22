@@ -3,6 +3,7 @@ extends Node3D
 @export var server_base := "https://casino.retailerway.com"
 @export var session_id := "godot-player"
 @export var move_speed := 120.0
+@export var gravity := 980.0
 @export var mouse_sensitivity := 0.0025
 @export var player_radius := 28.0
 @export var player_height := 120.0
@@ -198,8 +199,9 @@ func _physics_process(delta: float) -> void:
 
     var direction := _movement_direction()
     var velocity := player_body.velocity
+    if not player_body.is_on_floor():
+        velocity.y -= gravity * delta
     velocity.x = direction.x * move_speed
-    velocity.y = 0.0
     velocity.z = direction.z * move_speed
     player_body.velocity = velocity
     player_body.move_and_slide()
@@ -297,6 +299,9 @@ func _build_base_scene() -> void:
     player_body.name = "PlayerBody"
     player_body.collision_layer = 2
     player_body.collision_mask = 1
+    player_body.up_direction = Vector3.UP
+    player_body.floor_stop_on_slope = true
+    player_body.floor_max_angle = deg_to_rad(50.0)
     player_body.safe_margin = 1.0
     add_child(player_body)
 
