@@ -101,31 +101,51 @@ var _hot_reload_target_machines := 0
 var teleports: Array = []
 var active_teleport_id := ""
 var last_teleport_time_ms := 0
+var _screen_state := "auth"
+var _auth_screen_layer: CanvasLayer
+var _loading_screen_layer: CanvasLayer
+var _loading_progress_bar: ProgressBar
+var _loading_status_label: Label
+var _loading_progress := 0.0
+var _expected_machine_count := 0
+var _loaded_machine_count := 0
+var _game_started := false
+var hot_reload_file: FileAccess
 
 
 func _ready() -> void:
     _load_player_profile()
-    _build_base_scene()
-    _build_overlay()
-    _refresh_player_ui()
-    _refresh_machine_ui()
-    _load_remote_config()
-    _connect_config_socket()
-    if auth_cookie.is_empty():
-        balance_label.text = "Bakiye: giris bekleniyor"
-        if auth_result_label != null:
-            auth_result_label.text = "Giris yap veya yeni hesap olustur."
-    else:
-        _check_auth_session()
     _setup_mobile_controls()
-    if not _check_hot_reload_state():
-        print("Ready - use Ctrl+R or RELOAD button to hot reload scripts")
+
+    var hot_reload_file := FileAccess.open("user://.hotreload", FileAccess.READ)
+    var has_hot_reload := hot_reload_file != null
+    if hot_reload_file:
+        hot_reload_file.close()
+
+    if has_hot_reload:
+        _build_base_scene()
+        _game_started = true
+        _screen_state = "game"
+        _build_game_overlay()
+        _refresh_player_ui()
+        _refresh_machine_ui()
+        _load_remote_config()
+        _connect_config_socket()
+        _reconnect_balance_socket()
+        _check_hot_reload_state()
+        set_status("Hot reload complete")
+        return
+
+    _show_auth_screen()
+    if not auth_cookie.is_empty():
+        _check_auth_session()
 
 
 func _process(_delta: float) -> void:
     _poll_config_socket()
-    _poll_balance_socket()
-    _poll_cloud_stream()
+    if _screen_state == "game":
+        _poll_balance_socket()
+        _poll_cloud_stream()
 
 
 func _poll_config_socket() -> void:
@@ -318,14 +338,14 @@ func _build_base_scene() -> void:
     add_child(fill)
 
 
-func _build_overlay() -> void:
+func _build_game_overlay() -> void:
     var canvas := CanvasLayer.new()
     canvas.name = "Overlay"
+    canvas.layer = 1
     add_child(canvas)
 
     _build_screen_vignette(canvas)
     _build_hud(canvas)
-    _build_registration_panel(canvas)
     _build_prompt_panel(canvas)
     _build_crosshair(canvas)
 
@@ -460,6 +480,14 @@ func _build_hud(canvas: CanvasLayer) -> void:
     help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     _style_label(help, 12, Color(1.0, 1.0, 1.0, 0.56))
     box.add_child(help)
+
+    open_game_button = Button.new()
+    open_game_button.text = "Yakindaki Makineyi Ac"
+    open_game_button.disabled = true
+    open_game_button.pressed.connect(_open_nearby_game)
+    open_game_button.custom_minimum_size.x = 260
+    _style_button(open_game_button, UI_GOLD)
+    box.add_child(open_game_button)
 
 
 func _build_registration_panel(canvas: CanvasLayer) -> void:
@@ -602,6 +630,239 @@ func _build_crosshair(canvas: CanvasLayer) -> void:
     canvas.add_child(crosshair)
 
 
+func _show_auth_screen() -> void:
+    _screen_state = "auth"
+    _auth_screen_layer = CanvasLayer.new()
+    _auth_screen_layer.name = "AuthScreen"
+    _auth_screen_layer.layer = 10
+    add_child(_auth_screen_layer)
+
+    var bg := ColorRect.new()
+    bg.name = "AuthBg"
+    bg.color = Color(0.01, 0.005, 0.03, 1.0)
+    _set_control_full_rect(bg)
+    _auth_screen_layer.add_child(bg)
+
+    var center := MarginContainer.new()
+    center.anchor_left = 0.5
+    center.anchor_top = 0.5
+    center.anchor_right = 0.5
+    center.anchor_bottom = 0.5
+    center.offset_left = -230.0
+    center.offset_top = -290.0
+    center.offset_right = 230.0
+    center.offset_bottom = 290.0
+    _auth_screen_layer.add_child(center)
+
+    var card := PanelContainer.new()
+    card.name = "AuthCard"
+    card.add_theme_stylebox_override("panel", _panel_style(
+        Color(0.030, 0.018, 0.055, 0.94),
+        Color(UI_GOLD.r, UI_GOLD.g, UI_GOLD.b, 0.28),
+        28, 24, 28.0
+    ))
+    center.add_child(card)
+
+    var box := VBoxContainer.new()
+    box.add_theme_constant_override("separation", 10)
+    card.add_child(box)
+
+    var logo_title := Label.new()
+    logo_title.text = "RETAILERWAY"
+    logo_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    _style_label(logo_title, 36, UI_GOLD)
+    box.add_child(logo_title)
+
+    var logo_sub := Label.new()
+    logo_sub.text = "CASINO"
+    logo_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    _style_label(logo_sub, 22, UI_TEXT)
+    box.add_child(logo_sub)
+
+    var divider := HSeparator.new()
+    divider.modulate = Color(UI_GOLD.r, UI_GOLD.g, UI_GOLD.b, 0.2)
+    box.add_child(divider)
+
+    var mode_label := Label.new()
+    mode_label.text = "Hesap Girisi"
+    mode_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    _style_label(mode_label, 13, UI_MUTED)
+    box.add_child(mode_label)
+
+    var modes := HBoxContainer.new()
+    modes.add_theme_constant_override("separation", 10)
+    modes.alignment = 1
+    box.add_child(modes)
+
+    auth_login_mode_button = Button.new()
+    auth_login_mode_button.text = "GIRIS"
+    auth_login_mode_button.custom_minimum_size.x = 140
+    auth_login_mode_button.pressed.connect(func() -> void: _set_auth_mode("login"))
+    _style_button(auth_login_mode_button, UI_GOLD)
+    modes.add_child(auth_login_mode_button)
+
+    auth_register_mode_button = Button.new()
+    auth_register_mode_button.text = "KAYIT"
+    auth_register_mode_button.custom_minimum_size.x = 140
+    auth_register_mode_button.pressed.connect(func() -> void: _set_auth_mode("register"))
+    _style_button(auth_register_mode_button, UI_PINK)
+    modes.add_child(auth_register_mode_button)
+
+    auth_identifier_edit = LineEdit.new()
+    auth_identifier_edit.placeholder_text = "Email veya kullanici adi"
+    _style_line_edit(auth_identifier_edit)
+    box.add_child(auth_identifier_edit)
+
+    auth_username_edit = LineEdit.new()
+    auth_username_edit.placeholder_text = "Kullanici adi"
+    _style_line_edit(auth_username_edit)
+    box.add_child(auth_username_edit)
+
+    auth_email_edit = LineEdit.new()
+    auth_email_edit.placeholder_text = "Email"
+    _style_line_edit(auth_email_edit)
+    box.add_child(auth_email_edit)
+
+    auth_password_edit = LineEdit.new()
+    auth_password_edit.placeholder_text = "Sifre"
+    auth_password_edit.secret = true
+    _style_line_edit(auth_password_edit)
+    box.add_child(auth_password_edit)
+
+    auth_submit_button = Button.new()
+    auth_submit_button.text = "Giris Yap"
+    auth_submit_button.custom_minimum_size.x = 200
+    auth_submit_button.pressed.connect(_submit_auth)
+    _style_button(auth_submit_button, UI_GOLD)
+    box.add_child(auth_submit_button)
+
+    auth_result_label = Label.new()
+    auth_result_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    auth_result_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    auth_result_label.text = "Giris yap veya yeni hesap olustur."
+    _style_label(auth_result_label, 12, UI_MUTED)
+    box.add_child(auth_result_label)
+
+    if not player_email.is_empty():
+        auth_identifier_edit.text = player_email
+        auth_email_edit.text = player_email
+    if player_id != "godot-player":
+        auth_identifier_edit.text = player_id
+        auth_username_edit.text = player_id
+
+    auth_password_edit.text_submitted.connect(func(_t: String) -> void: _submit_auth())
+    _refresh_auth_ui()
+
+
+func _hide_auth_screen() -> void:
+    if _auth_screen_layer != null and not _auth_screen_layer.is_queued_for_deletion():
+        _auth_screen_layer.queue_free()
+        _auth_screen_layer = null
+
+
+func _show_loading_screen() -> void:
+    _loading_screen_layer = CanvasLayer.new()
+    _loading_screen_layer.name = "LoadingScreen"
+    _loading_screen_layer.layer = 9
+    add_child(_loading_screen_layer)
+
+    var bg := ColorRect.new()
+    bg.name = "LoadingBg"
+    bg.color = Color(0.01, 0.005, 0.03, 1.0)
+    _set_control_full_rect(bg)
+    _loading_screen_layer.add_child(bg)
+
+    var center := MarginContainer.new()
+    center.anchor_left = 0.5
+    center.anchor_top = 0.5
+    center.anchor_right = 0.5
+    center.anchor_bottom = 0.5
+    center.offset_left = -220.0
+    center.offset_top = -100.0
+    center.offset_right = 220.0
+    center.offset_bottom = 100.0
+    _loading_screen_layer.add_child(center)
+
+    var vbox := VBoxContainer.new()
+    vbox.add_theme_constant_override("separation", 16)
+    vbox.alignment = 1
+    center.add_child(vbox)
+
+    var title := Label.new()
+    title.text = "RETAILERWAY CASINO"
+    title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    _style_label(title, 28, UI_GOLD)
+    vbox.add_child(title)
+
+    _loading_status_label = Label.new()
+    _loading_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    _loading_status_label.text = "Yukleniyor..."
+    _style_label(_loading_status_label, 15, UI_TEXT)
+    vbox.add_child(_loading_status_label)
+
+    _loading_progress_bar = ProgressBar.new()
+    _loading_progress_bar.custom_minimum_size = Vector2(400, 8)
+    _loading_progress_bar.max_value = 100.0
+    _loading_progress_bar.value = 0.0
+    _loading_progress_bar.show_percentage = false
+
+    var ps := StyleBoxFlat.new()
+    ps.bg_color = Color(0.12, 0.08, 0.18, 0.6)
+    ps.set_corner_radius_all(6)
+
+    var fs := StyleBoxFlat.new()
+    fs.bg_color = UI_GOLD
+    fs.set_corner_radius_all(6)
+
+    _loading_progress_bar.add_theme_stylebox_override("background", ps)
+    _loading_progress_bar.add_theme_stylebox_override("fill", fs)
+    vbox.add_child(_loading_progress_bar)
+
+
+func _hide_loading_screen() -> void:
+    if _loading_screen_layer != null and not _loading_screen_layer.is_queued_for_deletion():
+        _loading_screen_layer.queue_free()
+        _loading_screen_layer = null
+
+
+func _update_loading_progress(p: float, status: String) -> void:
+    _loading_progress = p
+    if _loading_progress_bar != null:
+        _loading_progress_bar.value = p
+    set_status(status)
+
+
+func _on_auth_success() -> void:
+    if _screen_state != "auth":
+        return
+    _screen_state = "loading"
+    _hide_auth_screen()
+    _show_loading_screen()
+    _start_game_load()
+
+
+func _start_game_load() -> void:
+    _update_loading_progress(0, "Oyun baslatiliyor...")
+    _build_base_scene()
+    _update_loading_progress(10, "Config yukleniyor...")
+    _load_remote_config()
+    _connect_config_socket()
+
+
+func _complete_game_load() -> void:
+    if _game_started:
+        return
+    _game_started = true
+    _update_loading_progress(95, "Oyun dunyasi kuruluyor...")
+    _screen_state = "game"
+    _hide_loading_screen()
+    _build_game_overlay()
+    _refresh_player_ui()
+    _refresh_machine_ui()
+    _reconnect_balance_socket()
+    _update_loading_progress(100, "Hazir!")
+
+
 func _setup_mobile_controls() -> void:
     if not _is_mobile():
         return
@@ -701,6 +962,7 @@ func _on_config_response(result: int, response_code: int, _headers: PackedString
         _hot_reload_target_machines = machines_value.size() if typeof(machines_value) == TYPE_ARRAY else 0
     _apply_spawn(config)
     _apply_teleports(config)
+    _update_loading_progress(25, "Config yuklendi, harita yukleniyor...")
     _download_map(String(config.get("map", "")), config)
 
 
@@ -984,6 +1246,7 @@ func _load_map_from_path(config: Dictionary, local_path: String) -> void:
     if world_colliders_ready and has_pending_pose:
         _set_player_pose(pending_eye_position, pending_look_at)
 
+    _update_loading_progress(45, "Harita yuklendi, makineler yukleniyor...")
     set_status("Loaded map: %s (%s colliders)" % [local_path, map_collider_count])
     _download_machines(config.get("machines", []))
 
@@ -1016,9 +1279,13 @@ func _download_machines(machines_value: Variant) -> void:
         return
 
     var machine_list: Array = machines_value
+    _expected_machine_count = machine_list.size()
+    _loaded_machine_count = 0
     if machine_list.is_empty():
         set_status("Loaded map. No machines in config.")
         _complete_config_hot_reload()
+        if _screen_state == "loading":
+            _complete_game_load()
         return
 
     for machine_value in machine_list:
@@ -1093,6 +1360,13 @@ func _load_machine_from_path(machine: Dictionary, local_path: String) -> void:
     })
     _refresh_machine_ui()
     set_status("Loaded machine: %s (%s colliders)" % [machine_node.name, added_machine_colliders])
+
+    if _screen_state == "loading":
+        _loaded_machine_count += 1
+        var p := 45.0 + (float(_loaded_machine_count) / float(max(1, _expected_machine_count))) * 40.0
+        _update_loading_progress(p, "Makine yukleniyor: %s/%s" % [_loaded_machine_count, _expected_machine_count])
+        if _loaded_machine_count >= _expected_machine_count:
+            _complete_game_load()
 
     if hot_reload_in_progress and _hot_reload_target_machines > 0 and machines.size() >= _hot_reload_target_machines:
         _complete_config_hot_reload()
@@ -1364,19 +1638,20 @@ func _update_interaction_prompt() -> void:
     nearby_machine_index = nearest_index
     _refresh_machine_ui()
 
+    if open_game_button != null:
+        open_game_button.disabled = true
     if nearby_machine_index < 0:
         prompt_label.text = "Slot makinelerine yaklas."
-        open_game_button.disabled = true
         return
 
     var nearby: Dictionary = machines[nearby_machine_index]
     if not authenticated:
         prompt_label.text = "%s hazir. Oynamak icin once giris yap." % String(nearby.get("id", "slot"))
-        open_game_button.disabled = true
         return
 
     prompt_label.text = "E: %s koltuguna otur | G: ekrani ac | Space veya makine dugmesi: spin" % String(nearby.get("id", "slot"))
-    open_game_button.disabled = false
+    if open_game_button != null:
+        open_game_button.disabled = false
 
 
 func _sit_at_nearby_machine() -> void:
@@ -2238,9 +2513,12 @@ func _apply_authenticated_player(player: Dictionary) -> void:
     _save_player_profile()
     _refresh_player_ui()
     _refresh_auth_ui()
-    _reconnect_balance_socket()
+    if _screen_state != "auth":
+        _reconnect_balance_socket()
     if auth_result_label != null:
         auth_result_label.text = "Hazir: %s" % player_id
+    if _screen_state == "auth":
+        _on_auth_success()
 
 
 func _clear_authenticated(message: String) -> void:
@@ -2249,7 +2527,8 @@ func _clear_authenticated(message: String) -> void:
     if websocket_started:
         websocket.close()
     websocket_started = false
-    balance_label.text = "Bakiye: giris bekleniyor"
+    if balance_label != null:
+        balance_label.text = "Bakiye: giris bekleniyor"
     _save_player_profile()
     _refresh_player_ui()
     _refresh_auth_ui()
@@ -2345,12 +2624,14 @@ func _connect_balance_socket() -> void:
 
     var err := websocket.connect_to_url(socket_url)
     if err != OK:
-        balance_label.text = "Bakiye: baglanti hatasi (%s)" % error_string(err)
+        if balance_label != null:
+            balance_label.text = "Bakiye: baglanti hatasi (%s)" % error_string(err)
         return
 
     websocket_started = true
     websocket_last_state = websocket.get_ready_state()
-    balance_label.text = "Bakiye: baglaniyor..."
+    if balance_label != null:
+        balance_label.text = "Bakiye: baglaniyor..."
 
 
 func _reconnect_balance_socket() -> void:
@@ -2361,6 +2642,8 @@ func _reconnect_balance_socket() -> void:
 
 
 func _update_socket_status(state: WebSocketPeer.State) -> void:
+    if balance_label == null:
+        return
     match state:
         WebSocketPeer.STATE_CONNECTING:
             balance_label.text = "Bakiye: baglaniyor..."
@@ -2463,5 +2746,8 @@ func _base_url() -> String:
 
 
 func set_status(text: String) -> void:
-    status_label.text = text
+    if status_label != null:
+        status_label.text = text
+    if _loading_status_label != null:
+        _loading_status_label.text = text
     print(text)
