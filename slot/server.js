@@ -266,7 +266,8 @@ function handleClientGameRoute(url, req, res) {
     const requestedSessionID = normalizeSessionID(requestUrl.searchParams.get('sessionID'));
     const shellSession = getClientShellSession(req);
     const shellAuthorized = shellSession && shellSession.sessionID === requestedSessionID;
-    if (!shellAuthorized && !hasValidClientSecret(req, requestUrl)) {
+    const publicLobbyLaunch = requestUrl.searchParams.get('source') === 'web-lobby';
+    if (!shellAuthorized && !hasValidClientSecret(req, requestUrl) && !publicLobbyLaunch) {
       json(res, 403, { ok: false, error: 'Client render secret required' });
       return true;
     }

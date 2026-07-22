@@ -267,7 +267,7 @@ function openGame(game) {
 
   let url = game.launch;
   if (game.id === 'sugar-rush') {
-    url = '/sugar-rush/?sessionID=' + encodeURIComponent(sessionID) + '&rgs_url=' + encodeURIComponent(location.origin) + '&currency=USD';
+    url = '/client/start?source=web-lobby&game=sugar-rush&sessionID=' + encodeURIComponent(sessionID);
   }
 
   frame.src = url;
