@@ -40,12 +40,35 @@ const AUTO_MAINTENANCE_MAX_SUGAR_FS_TRIGGERS = Math.max(5, Number(process.env.AU
 const clientGameSessions = new Map(); // token -> { game, sessionID, expiresAt, lastAccess }
 const clientShellSessions = new Map(); // token -> { sessionID, expiresAt, lastAccess }
 const authSessions = new Map(); // token -> { playerId, expiresAt, lastAccess }
-const maintenanceState = {
-  active: false,
-  reason: '',
-  details: null,
-  triggeredAt: null,
+const MAINTENANCE_GAMES = ['sugar-rush', 'slot'];
+function createMaintenanceState() {
+  return {
+    active: false,
+    reason: '',
+    details: null,
+    triggeredAt: null,
+  };
+}
+const maintenanceStates = {
+  'sugar-rush': createMaintenanceState(),
+  slot: createMaintenanceState(),
 };
+
+function normalizeMaintenanceGame(value) {
+  return value === 'slot' ? 'slot' : 'sugar-rush';
+}
+
+function isKnownMaintenanceGame(value) {
+  return MAINTENANCE_GAMES.includes(value);
+}
+
+function maintenanceStateFor(game) {
+  return maintenanceStates[normalizeMaintenanceGame(game)];
+}
+
+function isMaintenanceActive(game) {
+  return maintenanceStateFor(game).active;
+}
 
 // ── HTTP server ──
 
@@ -257,32 +280,35 @@ function clearAuthCookie(req, res) {
   res.setHeader('Set-Cookie', `${AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`);
 }
 
-function maintenanceView() {
+function singleMaintenanceView(game) {
+  const normalizedGame = normalizeMaintenanceGame(game);
+  const state = maintenanceStateFor(normalizedGame);
   return {
-    active: maintenanceState.active,
-    reason: maintenanceState.reason || '',
-    details: maintenanceState.details || null,
-    triggeredAt: maintenanceState.triggeredAt,
-    stuckRoundMs: AUTO_MAINTENANCE_STUCK_ROUND_MS,
-    freeSpinLimits: {
+    game: normalizedGame,
+    active: state.active,
+    reason: state.reason || '',
+    details: state.details || null,
+    triggeredAt: state.triggeredAt,
+    stuckRoundMs: normalizedGame === 'sugar-rush' ? AUTO_MAINTENANCE_STUCK_ROUND_MS : null,
+    freeSpinLimits: normalizedGame === 'sugar-rush' ? {
       maxTotalAward: AUTO_MAINTENANCE_MAX_SUGAR_FS_AWARD,
       maxTriggers: AUTO_MAINTENANCE_MAX_SUGAR_FS_TRIGGERS,
-    },
+    } : null,
   };
 }
 
-function enterMaintenance(reason, details = null) {
-  if (maintenanceState.active) return maintenanceView();
-  maintenanceState.active = true;
-  maintenanceState.reason = String(reason || 'unknown').slice(0, 120);
-  maintenanceState.details = details && typeof details === 'object' ? details : null;
-  maintenanceState.triggeredAt = new Date().toISOString();
-  console.error(`[maintenance] active: ${maintenanceState.reason}`, maintenanceState.details || '');
-  broadcastMaintenanceUpdate();
-  return maintenanceView();
+function maintenanceView(game) {
+  if (game) return singleMaintenanceView(game);
+  const games = Object.fromEntries(MAINTENANCE_GAMES.map(key => [key, singleMaintenanceView(key)]));
+  const activeGames = MAINTENANCE_GAMES.filter(key => games[key].active);
+  return {
+    active: activeGames.length > 0,
+    activeGames,
+    games,
+  };
 }
 
-function clearMaintenance() {
+function clearSugarWalletRounds() {
   for (const session of walletSessions.values()) {
     if (session && session.round && session.round.active) {
       session.round.active = false;
@@ -290,26 +316,53 @@ function clearMaintenance() {
       session.event = null;
     }
   }
-  maintenanceState.active = false;
-  maintenanceState.reason = '';
-  maintenanceState.details = null;
-  maintenanceState.triggeredAt = null;
-  broadcastMaintenanceUpdate();
-  return maintenanceView();
 }
 
-function maintenanceJson(res) {
+function enterMaintenance(game, reason, details = null) {
+  if (!isKnownMaintenanceGame(game)) {
+    details = reason;
+    reason = game;
+    game = 'sugar-rush';
+  }
+  const normalizedGame = normalizeMaintenanceGame(game);
+  const state = maintenanceStateFor(normalizedGame);
+  if (state.active) return maintenanceView(normalizedGame);
+  state.active = true;
+  state.reason = String(reason || 'unknown').slice(0, 120);
+  state.details = details && typeof details === 'object' ? details : null;
+  state.triggeredAt = new Date().toISOString();
+  console.error(`[maintenance:${normalizedGame}] active: ${state.reason}`, state.details || '');
+  broadcastMaintenanceUpdate(normalizedGame);
+  return maintenanceView(normalizedGame);
+}
+
+function clearMaintenance(game) {
+  const games = game ? [normalizeMaintenanceGame(game)] : MAINTENANCE_GAMES;
+  if (games.includes('sugar-rush')) clearSugarWalletRounds();
+  for (const key of games) {
+    const state = maintenanceStateFor(key);
+    state.active = false;
+    state.reason = '';
+    state.details = null;
+    state.triggeredAt = null;
+  }
+  if (game) broadcastMaintenanceUpdate(normalizeMaintenanceGame(game));
+  else broadcastMaintenanceUpdate();
+  return maintenanceView(game);
+}
+
+function maintenanceJson(res, game = 'sugar-rush') {
   return json(res, 503, {
     ok: false,
     code: 'ERR_MAINTENANCE',
     error: 'Oyun bakim modunda',
     message: 'Oyun gecici olarak bakim modunda. Lutfen daha sonra tekrar deneyin.',
-    maintenance: maintenanceView(),
+    maintenance: maintenanceView(game),
   });
 }
 
-function serveMaintenancePage(res) {
-  const state = maintenanceView();
+function serveMaintenancePage(res, game = 'sugar-rush') {
+  const state = maintenanceView(game);
   res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(`<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bakim Modu</title><style>html,body{height:100%;margin:0;background:radial-gradient(circle at 50% 0%,#2b174d,#07040f 70%);color:#fff;font:15px/1.5 system-ui,-apple-system,sans-serif}.wrap{min-height:100%;display:grid;place-items:center;padding:24px}.card{width:min(520px,92vw);border:1px solid rgba(255,255,255,.16);border-radius:24px;background:rgba(12,7,28,.84);box-shadow:0 24px 80px rgba(0,0,0,.45);padding:28px;text-align:center}.badge{display:inline-block;border:1px solid rgba(255,209,102,.35);border-radius:999px;color:#ffd166;padding:5px 12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;font-size:12px}h1{margin:16px 0 8px;font-size:30px}p{margin:8px 0;color:#cfc4ee}.reason{margin-top:16px;color:#ffb3c7;font-size:13px}.time{color:#8f84b8;font-size:12px}</style></head><body><main class="wrap"><section class="card"><span class="badge">Bakim Modu</span><h1>Oyun gecici olarak durduruldu</h1><p>Bir takilma veya teknik sorun algilandi. Oyunculari korumak icin oyun otomatik olarak bakim moduna alindi.</p><p>Lutfen biraz sonra tekrar deneyin.</p><div class="reason">Sebep: ${escapeHtml(state.reason || 'otomatik kontrol')}</div><div class="time">${escapeHtml(state.triggeredAt || '')}</div></section></main></body></html>`);
 }
@@ -383,12 +436,6 @@ function handleClientGameRoute(url, req, res) {
   }
 
   if (req.method === 'GET' && url === '/client/start') {
-    checkStaleWalletRounds();
-    if (maintenanceState.active) {
-      serveMaintenancePage(res);
-      return true;
-    }
-
     const requestedSessionID = normalizeSessionID(requestUrl.searchParams.get('sessionID'));
     const shellSession = getClientShellSession(req);
     const shellAuthorized = shellSession && shellSession.sessionID === requestedSessionID;
@@ -401,6 +448,12 @@ function handleClientGameRoute(url, req, res) {
     const game = requestUrl.searchParams.get('game') === 'sugar-rush' ? 'sugar-rush' : '';
     if (!game) {
       json(res, 400, { ok: false, error: 'Unsupported client-render game' });
+      return true;
+    }
+
+    checkStaleWalletRounds();
+    if (isMaintenanceActive(game)) {
+      serveMaintenancePage(res, game);
       return true;
     }
 
@@ -425,8 +478,8 @@ function handleClientGameRoute(url, req, res) {
 
   if (req.method === 'GET' && url.startsWith('/client-game/sugar-rush/')) {
     checkStaleWalletRounds();
-    if (maintenanceState.active) {
-      serveMaintenancePage(res);
+    if (isMaintenanceActive('sugar-rush')) {
+      serveMaintenancePage(res, 'sugar-rush');
       return true;
     }
 
@@ -475,7 +528,7 @@ const server = http.createServer((req, res) => {
     setWalletBalance: (id, amount) => { adjustDisplayBalance(id, amount - displayBalance(id)); },
     listWallets: () => [...walletSessions.keys()],
     listCloudSessions,
-    getMaintenanceState: () => maintenanceView(),
+    getMaintenanceState: (game) => maintenanceView(game),
     clearMaintenance,
     onConfigSaved: () => broadcastConfigUpdate(),
     onPlayersChanged: () => broadcastPlayersUpdate(),
@@ -521,8 +574,8 @@ const server = http.createServer((req, res) => {
   // Cloud streaming remains available at /cloud/* for legacy clients
   if (url === '/sugar-rush' || url === '/sugar-rush/' || url.startsWith('/sugar-rush/')) {
     checkStaleWalletRounds();
-    if (maintenanceState.active) {
-      return serveMaintenancePage(res);
+    if (isMaintenanceActive('sugar-rush')) {
+      return serveMaintenancePage(res, 'sugar-rush');
     }
 
     if (url === '/sugar-rush') {
@@ -546,6 +599,10 @@ const server = http.createServer((req, res) => {
       res.writeHead(403, { 'Cache-Control': 'no-store' });
       return res.end('Forbidden');
     }
+  }
+
+  if (directSlotRequest && isMaintenanceActive('slot')) {
+    return serveMaintenancePage(res, 'slot');
   }
 
   if (url === '/casino-config.json') {
@@ -654,7 +711,9 @@ function handlePublicApiRoute(url, req, res) {
 
   if (url === '/api/maintenance' && req.method === 'GET') {
     checkStaleWalletRounds();
-    json(res, 200, { ok: true, maintenance: maintenanceView() });
+    const requestUrl = new URL(req.url, requestBaseUrl(req));
+    const game = requestUrl.searchParams.get('game');
+    json(res, 200, { ok: true, maintenance: maintenanceView(game) });
     return true;
   }
   if (url === '/api/maintenance') {
@@ -719,14 +778,14 @@ let sugarBooks = null;
 const MAX_SINGLE_SUGAR_FS_AWARD = 34;
 
 function checkStaleWalletRounds() {
-  if (maintenanceState.active) return true;
+  if (isMaintenanceActive('sugar-rush')) return true;
   const now = Date.now();
   for (const [sessionID, session] of walletSessions.entries()) {
     const round = session && session.round;
     if (!round || !round.active) continue;
     const lastProgressAt = Number(round.lastProgressAt || round.startedAt || round.betID || 0);
     if (!Number.isFinite(lastProgressAt) || now - lastProgressAt <= AUTO_MAINTENANCE_STUCK_ROUND_MS) continue;
-    enterMaintenance('stuck-round', {
+    enterMaintenance('sugar-rush', 'stuck-round', {
       sessionID,
       betID: round.betID,
       lastEvent: round.event || session.event || null,
@@ -839,7 +898,7 @@ function loadSugarBooks() {
     const rejected = loadedBooks.length - sugarBooks.length;
     console.log(`Loaded ${sugarBooks.length} Sugar Rush server-side books${rejected ? ` (${rejected} malformed free-spin books skipped)` : ''}`);
     if (loadedBooks.length > 0 && sugarBooks.length === 0) {
-      enterMaintenance('sugar-books-invalid', { loadedBooks: loadedBooks.length, rejected });
+      enterMaintenance('sugar-rush', 'sugar-books-invalid', { loadedBooks: loadedBooks.length, rejected });
     }
   } catch (err) {
     console.warn(`Could not load Sugar Rush books (${err.message}); using fallback generator`);
@@ -885,8 +944,8 @@ function handleWalletRoute(url, req, res) {
   if (!routes.has(url)) return false;
 
   checkStaleWalletRounds();
-  if (maintenanceState.active && url !== '/wallet/end-round') {
-    maintenanceJson(res);
+  if (isMaintenanceActive('sugar-rush') && url !== '/wallet/end-round') {
+    maintenanceJson(res, 'sugar-rush');
     return true;
   }
 
@@ -933,13 +992,13 @@ function handleWalletRoute(url, req, res) {
         const book = pickSugarBook(mode);
         const fsGuard = excessiveSugarFreeSpins(book);
         if (fsGuard.excessive) {
-          enterMaintenance('excessive-free-spins', {
+          enterMaintenance('sugar-rush', 'excessive-free-spins', {
             sessionID,
             mode,
             bookId: book.id,
             ...fsGuard,
           });
-          return maintenanceJson(res);
+          return maintenanceJson(res, 'sugar-rush');
         }
 
         const events = book.events.map(event => scaleSugarEvent(event, betDisplayAmount));
@@ -980,12 +1039,12 @@ function handleWalletRoute(url, req, res) {
         return json(res, 200, { event: session.event });
       }
     } catch (err) {
-      enterMaintenance('wallet-route-error', {
+      enterMaintenance('sugar-rush', 'wallet-route-error', {
         route: url,
         sessionID,
         message: err.message,
       });
-      return maintenanceJson(res);
+      return maintenanceJson(res, 'sugar-rush');
     }
   });
 
@@ -1126,8 +1185,15 @@ function broadcastConfigUpdate() {
   }
 }
 
-function broadcastMaintenanceUpdate() {
-  const msg = JSON.stringify({ type: 'maintenance:updated', maintenance: maintenanceView(), ts: Date.now() });
+function broadcastMaintenanceUpdate(game = null) {
+  const maintenance = maintenanceView(game);
+  const msg = JSON.stringify({
+    type: 'maintenance:updated',
+    game: game ? normalizeMaintenanceGame(game) : null,
+    maintenance,
+    maintenances: game ? null : maintenance.games,
+    ts: Date.now(),
+  });
   for (const [client] of wsSessions.entries()) {
     if (client.readyState === 1) client.send(msg);
   }
@@ -1150,7 +1216,7 @@ wss.on('connection', (ws, req) => {
     getWalletSession(sessionID);
     sendBalance(ws, sessionID, 'connected');
     sendBalance(ws, sessionID);
-    ws.send(JSON.stringify({ type: 'maintenance:updated', maintenance: maintenanceView(), ts: Date.now() }));
+    ws.send(JSON.stringify({ type: 'maintenance:updated', maintenance: maintenanceView(), maintenances: maintenanceView().games, ts: Date.now() }));
   }
 
   ws.on('message', (raw) => {
@@ -1170,6 +1236,10 @@ wss.on('connection', (ws, req) => {
 
       switch (msg.type) {
         case 'spin': {
+          if (isMaintenanceActive('slot')) {
+            ws.send(JSON.stringify({ type: 'maintenance:updated', game: 'slot', maintenance: maintenanceView('slot'), ts: Date.now() }));
+            return;
+          }
           const bet = msg.bet || 100;
           if (bal < bet) {
             ws.send(JSON.stringify({ type: 'error', message: 'Yetersiz bakiye' }));
@@ -1212,12 +1282,20 @@ wss.on('connection', (ws, req) => {
         }
 
         case 'bet': {
+          if (isMaintenanceActive('slot')) {
+            ws.send(JSON.stringify({ type: 'maintenance:updated', game: 'slot', maintenance: maintenanceView('slot'), ts: Date.now() }));
+            return;
+          }
           const amount = msg.amount || 0;
           adjustDisplayBalance(sessionID, -amount);
           break;
         }
 
         case 'win': {
+          if (isMaintenanceActive('slot')) {
+            ws.send(JSON.stringify({ type: 'maintenance:updated', game: 'slot', maintenance: maintenanceView('slot'), ts: Date.now() }));
+            return;
+          }
           const amount = msg.amount || 0;
           adjustDisplayBalance(sessionID, amount);
           break;

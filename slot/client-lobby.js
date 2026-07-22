@@ -7,6 +7,7 @@
     socket: null,
     socketTimer: null,
     maintenanceTimer: null,
+    currentGame: '',
     config: null,
   }
 
@@ -55,9 +56,15 @@
     return response.json()
   }
 
-  async function fetchMaintenance() {
-    const data = await fetchJson('/api/maintenance')
+  async function fetchMaintenance(game) {
+    const query = game ? '?game=' + encodeURIComponent(game) : ''
+    const data = await fetchJson('/api/maintenance' + query)
     return data.maintenance || { active: false }
+  }
+
+  function isCurrentMaintenance(maintenance, messageGame) {
+    const game = messageGame || (maintenance && maintenance.game)
+    return isGameOpen() && state.currentGame && game === state.currentGame
   }
 
   function showMaintenance(maintenance) {
@@ -82,8 +89,8 @@
     state.maintenanceTimer = setInterval(async () => {
       if (!isGameOpen()) return
       try {
-        const maintenance = await fetchMaintenance()
-        if (maintenance.active && isGameOpen()) showMaintenance(maintenance)
+        const maintenance = await fetchMaintenance(state.currentGame)
+        if (maintenance.active && isCurrentMaintenance(maintenance)) showMaintenance(maintenance)
       } catch (_) {}
     }, 5000)
   }
@@ -171,7 +178,8 @@
       return
     }
 
-    const maintenance = await fetchMaintenance().catch(() => ({ active: false }))
+    state.currentGame = game
+    const maintenance = await fetchMaintenance(game).catch(() => ({ active: false }))
     if (maintenance.active) {
       els.gameTitle.textContent = machineTitle(machine)
       showMaintenance(maintenance)
@@ -188,6 +196,7 @@
 
   function closeGame() {
     els.gameFrame.src = 'about:blank'
+    state.currentGame = ''
     hideMaintenance()
     stopMaintenanceWatch()
     els.gameLayer.classList.remove('active')
@@ -221,7 +230,7 @@
       if (payload && payload.type === 'config:updated') {
         loadConfig().catch(error => setMessage(error.message))
       }
-      if (payload && payload.type === 'maintenance:updated' && payload.maintenance && payload.maintenance.active && isGameOpen()) {
+      if (payload && payload.type === 'maintenance:updated' && payload.maintenance && payload.maintenance.active && isCurrentMaintenance(payload.maintenance, payload.game)) {
         showMaintenance(payload.maintenance)
       }
     })

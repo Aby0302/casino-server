@@ -581,11 +581,13 @@ function handleAdminRoute(req, res, ctx) {
     }
 
     if (req.method === 'GET' && pathname === '/admin/api/maintenance') {
-      return json(res, 200, { ok: true, maintenance: typeof ctx.getMaintenanceState === 'function' ? ctx.getMaintenanceState() : null });
+      const game = requestUrl.searchParams.get('game') || undefined;
+      return json(res, 200, { ok: true, maintenance: typeof ctx.getMaintenanceState === 'function' ? ctx.getMaintenanceState(game) : null });
     }
 
     if (req.method === 'POST' && pathname === '/admin/api/maintenance/clear') {
-      const maintenance = typeof ctx.clearMaintenance === 'function' ? ctx.clearMaintenance() : null;
+      const game = requestUrl.searchParams.get('game') || undefined;
+      const maintenance = typeof ctx.clearMaintenance === 'function' ? ctx.clearMaintenance(game) : null;
       return json(res, 200, { ok: true, maintenance });
     }
 

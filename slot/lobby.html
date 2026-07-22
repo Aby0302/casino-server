@@ -257,6 +257,7 @@ let sessionID = null;
 let ws = null;
 let currentPlayer = null;
 let maintenanceTimer = null;
+let currentGameId = null;
 
 function setAuthMode(mode) {
   const login = mode === 'login';
@@ -299,10 +300,16 @@ async function apiJson(url, payload) {
   return data;
 }
 
-async function fetchMaintenance() {
-  const res = await fetch('/api/maintenance', { cache: 'no-store', credentials: 'same-origin' });
+async function fetchMaintenance(gameId) {
+  const query = gameId ? '?game=' + encodeURIComponent(gameId) : '';
+  const res = await fetch('/api/maintenance' + query, { cache: 'no-store', credentials: 'same-origin' });
   const data = await res.json().catch(() => ({ ok: false }));
   return data.maintenance || { active: false };
+}
+
+function isCurrentMaintenance(maintenance, messageGame) {
+  const gameId = messageGame || (maintenance && maintenance.game);
+  return isGameOpen() && currentGameId && gameId === currentGameId;
 }
 
 function showMaintenance(maintenance) {
@@ -332,8 +339,8 @@ function startMaintenanceWatch() {
   maintenanceTimer = setInterval(async () => {
     if (!isGameOpen()) return;
     try {
-      const maintenance = await fetchMaintenance();
-      if (maintenance.active && isGameOpen()) showMaintenance(maintenance);
+      const maintenance = await fetchMaintenance(currentGameId);
+      if (maintenance.active && isCurrentMaintenance(maintenance)) showMaintenance(maintenance);
     } catch (_) {}
   }, 5000);
 }
@@ -375,7 +382,7 @@ function connectWS() {
       if (msg.type === 'connected' || msg.type === 'balance') {
         fetchBalance();
       }
-      if (msg.type === 'maintenance:updated' && msg.maintenance && msg.maintenance.active && isGameOpen()) {
+      if (msg.type === 'maintenance:updated' && msg.maintenance && msg.maintenance.active && isCurrentMaintenance(msg.maintenance, msg.game)) {
         showMaintenance(msg.maintenance);
       }
     } catch (_) {}
@@ -413,7 +420,8 @@ async function openGame(game) {
     showAuth('Oynamak için önce giriş yapın.');
     return;
   }
-  const maintenance = await fetchMaintenance().catch(() => ({ active: false }));
+  currentGameId = game.id;
+  const maintenance = await fetchMaintenance(game.id).catch(() => ({ active: false }));
   if (maintenance.active) {
     document.getElementById('gameTitle').textContent = game.name;
     showMaintenance(maintenance);
@@ -447,6 +455,7 @@ function closeGame() {
   const frame = document.getElementById('game-frame');
   layer.classList.remove('open');
   frame.src = '';
+  currentGameId = null;
   hideMaintenance();
   stopMaintenanceWatch();
   document.body.style.overflow = '';

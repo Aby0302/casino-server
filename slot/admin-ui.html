@@ -267,8 +267,7 @@
     <h2>Sunucu Durumu</h2>
     <div id="statusInfo" class="muted">-</div>
     <h2 style="margin-top:16px">Bakım Modu</h2>
-    <div id="maintenanceInfo" class="muted">-</div>
-    <div class="row" style="margin-top:8px"><button class="act danger small" id="maintenanceClear">Bakımı Kapat</button></div>
+    <table><thead><tr><th>Oyun</th><th>Durum</th><th>Sebep</th><th>Zaman</th><th></th></tr></thead><tbody id="maintenanceBody"></tbody></table>
     <h2 style="margin-top:16px">Aktif Cüzdanlar</h2>
     <table><thead><tr><th>Session</th><th>Bakiye</th><th>Kayıtlı mı</th></tr></thead><tbody id="walletsBody"></tbody></table>
     <h2 style="margin-top:16px">Cloud Stream Oturumları</h2>
@@ -2276,11 +2275,13 @@ $('#rtpReset').onclick = async () => {
 async function loadStatus() {
   const s = await api('/admin/api/status');
   $('#statusInfo').textContent = `Çalışma süresi: ${Math.floor(s.uptimeSeconds / 3600)}s ${Math.floor((s.uptimeSeconds % 3600) / 60)}dk`;
-  const m = s.maintenance || { active: false };
-  $('#maintenanceInfo').innerHTML = m.active
-    ? `<strong style="color:#ff9cac">AKTİF</strong> · ${esc(m.reason || 'bilinmeyen')} · ${esc(m.triggeredAt || '')}`
-    : '<span style="color:#9ee6a7">Kapalı</span>';
-  $('#maintenanceClear').style.display = m.active ? '' : 'none';
+  const maintenance = s.maintenance || { active: false, games: {} };
+  const maintenanceGames = maintenance.games || { 'sugar-rush': maintenance };
+  const labels = { 'sugar-rush': 'Sugar Rush', slot: 'Sweet Bonanza' };
+  $('#maintenanceBody').innerHTML = ['sugar-rush', 'slot'].map(game => {
+    const m = maintenanceGames[game] || { game, active: false };
+    return `<tr><td>${esc(labels[game] || game)}</td><td>${m.active ? '<strong style="color:#ff9cac">AKTİF</strong>' : '<span style="color:#9ee6a7">Kapalı</span>'}</td><td>${esc(m.reason || '-')}</td><td class="muted">${esc(m.triggeredAt || '-')}</td><td>${m.active ? `<button class="act danger small" data-maintenance-clear="${esc(game)}">Bakımı Kapat</button>` : ''}</td></tr>`;
+  }).join('');
   $('#walletsBody').innerHTML = s.wallets.map(w =>
     `<tr><td><code>${esc(w.id)}</code></td><td>${w.balance}</td><td>${w.registered ? 'evet' : '<span class="muted">hayır</span>'}</td></tr>`
   ).join('') || '<tr><td colspan="3" class="muted">Aktif cüzdan yok</td></tr>';
@@ -2290,11 +2291,14 @@ async function loadStatus() {
   ).join('') || '<tr><td colspan="5" class="muted">Aktif stream yok</td></tr>';
 }
 
-$('#maintenanceClear').onclick = async () => {
-  await api('/admin/api/maintenance/clear', { method: 'POST' });
+$('#maintenanceBody').addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-maintenance-clear]');
+  if (!button) return;
+  const game = button.dataset.maintenanceClear;
+  await api('/admin/api/maintenance/clear?game=' + encodeURIComponent(game), { method: 'POST' });
   toast('Bakım modu kapatıldı');
   loadStatus();
-};
+});
 
 // ── Yardımcılar ──
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
