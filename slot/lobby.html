@@ -318,6 +318,10 @@ function showMaintenance(maintenance) {
   document.body.style.overflow = 'hidden';
 }
 
+function isGameOpen() {
+  return document.getElementById('game-layer').classList.contains('open');
+}
+
 function hideMaintenance() {
   document.getElementById('game-frame').classList.remove('maintenance');
   document.getElementById('maintenance-panel').classList.remove('show');
@@ -326,10 +330,10 @@ function hideMaintenance() {
 function startMaintenanceWatch() {
   if (maintenanceTimer) clearInterval(maintenanceTimer);
   maintenanceTimer = setInterval(async () => {
-    if (!document.getElementById('game-layer').classList.contains('open')) return;
+    if (!isGameOpen()) return;
     try {
       const maintenance = await fetchMaintenance();
-      if (maintenance.active) showMaintenance(maintenance);
+      if (maintenance.active && isGameOpen()) showMaintenance(maintenance);
     } catch (_) {}
   }, 5000);
 }
@@ -371,7 +375,7 @@ function connectWS() {
       if (msg.type === 'connected' || msg.type === 'balance') {
         fetchBalance();
       }
-      if (msg.type === 'maintenance:updated' && msg.maintenance && msg.maintenance.active) {
+      if (msg.type === 'maintenance:updated' && msg.maintenance && msg.maintenance.active && isGameOpen()) {
         showMaintenance(msg.maintenance);
       }
     } catch (_) {}

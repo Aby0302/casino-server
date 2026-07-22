@@ -68,6 +68,10 @@
     els.gameLayer.classList.add('active')
   }
 
+  function isGameOpen() {
+    return els.gameLayer.classList.contains('active')
+  }
+
   function hideMaintenance() {
     els.gameFrame.classList.remove('maintenance')
     els.maintenancePanel.classList.remove('show')
@@ -76,10 +80,10 @@
   function startMaintenanceWatch() {
     if (state.maintenanceTimer) clearInterval(state.maintenanceTimer)
     state.maintenanceTimer = setInterval(async () => {
-      if (!els.gameLayer.classList.contains('active')) return
+      if (!isGameOpen()) return
       try {
         const maintenance = await fetchMaintenance()
-        if (maintenance.active) showMaintenance(maintenance)
+        if (maintenance.active && isGameOpen()) showMaintenance(maintenance)
       } catch (_) {}
     }, 5000)
   }
@@ -217,7 +221,7 @@
       if (payload && payload.type === 'config:updated') {
         loadConfig().catch(error => setMessage(error.message))
       }
-      if (payload && payload.type === 'maintenance:updated' && payload.maintenance && payload.maintenance.active) {
+      if (payload && payload.type === 'maintenance:updated' && payload.maintenance && payload.maintenance.active && isGameOpen()) {
         showMaintenance(payload.maintenance)
       }
     })
