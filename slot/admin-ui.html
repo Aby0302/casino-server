@@ -1506,12 +1506,13 @@ async function boot3DEditor() {
   reset3DCamera();
 
   const canvas = map3d.renderer.domElement;
+  canvas.tabIndex = 0;
   canvas.addEventListener('pointerdown', on3DPointerDown);
   canvas.addEventListener('pointermove', on3DPointerMove);
   canvas.addEventListener('pointerup', on3DPointerUp);
   canvas.addEventListener('pointerleave', on3DPointerUp);
   canvas.addEventListener('dblclick', () => focusSelectedObject());
-  window.addEventListener('keydown', handle3DShortcuts);
+  window.addEventListener('keydown', handle3DShortcuts, true);
   animate3D();
 }
 
@@ -2093,6 +2094,23 @@ function keyboardNudgeStep(e) {
   return step;
 }
 
+function editableElementHasVisibleFocus(el) {
+  if (!el || !document.body.contains(el)) return false;
+  const tag = el.tagName;
+  const editable = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+  if (!editable) return false;
+  return el.getClientRects().length > 0;
+}
+
+function keyboardNudgeEntry(e) {
+  const key = e.key || e.code || '';
+  if (key === 'ArrowLeft' || key === 'Left' || e.code === 'ArrowLeft' || e.keyCode === 37) return [0, -1];
+  if (key === 'ArrowRight' || key === 'Right' || e.code === 'ArrowRight' || e.keyCode === 39) return [0, 1];
+  if (key === 'ArrowUp' || key === 'Up' || e.code === 'ArrowUp' || e.keyCode === 38) return [2, -1];
+  if (key === 'ArrowDown' || key === 'Down' || e.code === 'ArrowDown' || e.keyCode === 40) return [2, 1];
+  return null;
+}
+
 function nudgeSelectedObject(axisIndex, delta) {
   const target = getConfigTarget(selectedObjectKey);
   if (!target || isTargetLocked(target) || isTargetHidden(target) || !target.positionKey) return false;
@@ -2114,8 +2132,7 @@ function nudgeSelectedObject(axisIndex, delta) {
 }
 
 function handleKeyboardNudge(e) {
-  const keys = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [2, -1], ArrowDown: [2, 1] };
-  const entry = keys[e.key];
+  const entry = keyboardNudgeEntry(e);
   if (!entry || e.ctrlKey || e.metaKey) return false;
   const moved = nudgeSelectedObject(entry[0], entry[1] * keyboardNudgeStep(e));
   e.preventDefault();
@@ -2124,8 +2141,7 @@ function handleKeyboardNudge(e) {
 
 function handle3DShortcuts(e) {
   if ($('#tab-map').style.display === 'none') return;
-  const tag = document.activeElement && document.activeElement.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (editableElementHasVisibleFocus(document.activeElement)) return;
   if (handleKeyboardNudge(e)) return;
   if (e.key === 'w' || e.key === 'W') { setTransformMode('translate'); e.preventDefault(); }
   if (e.key === 'e' || e.key === 'E') { setTransformMode('rotate'); e.preventDefault(); }
@@ -2222,6 +2238,9 @@ function getGroundY() {
 
 function on3DPointerDown(e) {
   if (!map3d.camera || !config) return;
+  if (map3d.renderer && map3d.renderer.domElement && typeof map3d.renderer.domElement.focus === 'function') {
+    try { map3d.renderer.domElement.focus({ preventScroll: true }); } catch (err) { map3d.renderer.domElement.focus(); }
+  }
   if (map3d.transformDragging || (map3d.transformControls && map3d.transformControls.dragging)) return;
   const hit = pickEditableObject(e);
   if (!hit) return;
