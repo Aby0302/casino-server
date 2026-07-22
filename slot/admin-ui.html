@@ -318,6 +318,21 @@ function toast(msg, isErr) {
   setTimeout(() => el.className = '', 2600);
 }
 
+function makeUploadId() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+  return String(Date.now()) + '-' + Math.random().toString(16).slice(2);
+}
+
+function parseUploadResponse(xhr) {
+  const raw = xhr.responseText || '';
+  let body = {};
+  try { body = raw ? JSON.parse(raw) : {}; } catch (e) {}
+  if (xhr.status === 401) { $('#login').style.display = 'flex'; throw new Error('Giriş gerekli'); }
+  if (xhr.status >= 200 && xhr.status < 300 && body.ok) return body;
+  const detail = body.error || raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220) || 'Sunucu cevap vermedi';
+  throw new Error(`Yükleme hatası (${xhr.status || 'ağ'}): ${detail}`);
+}
+
 async function api(url, opts = {}) {
   const res = await fetch(url, { credentials: 'same-origin', ...opts });
   if (res.status === 401) { $('#login').style.display = 'flex'; throw new Error('Giriş gerekli'); }
@@ -489,31 +504,67 @@ async function loadFiles() {
   });
 }
 $('#fileDir').onchange = loadFiles;
-$('#uploadBtn').onclick = () => {
+const UPLOAD_CHUNK_BYTES = 768 * 1024;
+
+function uploadChunk({ dir, file, uploadId, offset, total, chunk, progress }) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable) progress(offset + e.loaded);
+    };
+    xhr.onload = () => {
+      try { resolve(parseUploadResponse(xhr)); }
+      catch (err) { reject(err); }
+    };
+    xhr.onerror = () => reject(new Error('Yükleme hatası: bağlantı koptu veya proxy reddetti'));
+    const qs = new URLSearchParams({
+      dir, name: file.name, uploadId,
+      offset: String(offset), total: String(total),
+    });
+    xhr.open('POST', '/admin/api/files/upload-chunk?' + qs.toString());
+    xhr.send(chunk);
+  });
+}
+
+async function uploadFileInChunks(dir, file, progress) {
+  const uploadId = makeUploadId();
+  const total = file.size;
+  if (total === 0) {
+    return uploadChunk({ dir, file, uploadId, offset: 0, total, chunk: file.slice(0, 0), progress });
+  }
+  let offset = 0;
+  let lastBody = null;
+  while (offset < total) {
+    const end = Math.min(offset + UPLOAD_CHUNK_BYTES, total);
+    lastBody = await uploadChunk({ dir, file, uploadId, offset, total, chunk: file.slice(offset, end), progress });
+    offset = lastBody.written || end;
+    progress(offset);
+  }
+  return lastBody;
+}
+
+$('#uploadBtn').onclick = async () => {
   const file = $('#fileInput').files[0];
   if (!file) { toast('Önce dosya seçin', true); return; }
   const dir = $('#fileDir').value;
-  const xhr = new XMLHttpRequest();
   const prog = $('#uploadProg');
-  xhr.withCredentials = true;
+  const btn = $('#uploadBtn');
+  btn.disabled = true;
   prog.style.display = ''; prog.value = 0;
-  xhr.upload.onprogress = e => { if (e.lengthComputable) prog.value = (e.loaded / e.total) * 100; };
-  xhr.onload = () => {
+  try {
+    await uploadFileInChunks(dir, file, loaded => {
+      prog.value = file.size > 0 ? Math.min(100, (loaded / file.size) * 100) : 100;
+    });
     prog.style.display = 'none';
-    const raw = xhr.responseText || '';
-    let body = {};
-    try {
-      body = raw ? JSON.parse(raw) : {};
-    } catch (e) {}
-    if (xhr.status === 401) { $('#login').style.display = 'flex'; toast('Giriş gerekli', true); return; }
-    if (xhr.status >= 200 && xhr.status < 300 && body.ok) { toast('Yüklendi: ' + file.name); loadFiles(); return; }
-    const detail = body.error || raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220) || 'Sunucu cevap vermedi';
-    toast(`Yükleme hatası (${xhr.status || 'ağ'}): ${detail}`, true);
-  };
-  xhr.onerror = () => { prog.style.display = 'none'; toast('Yükleme hatası: bağlantı koptu veya proxy reddetti', true); };
-  xhr.ontimeout = () => { prog.style.display = 'none'; toast('Yükleme zaman aşımına uğradı', true); };
-  xhr.open('POST', `/admin/api/files/upload?dir=${encodeURIComponent(dir)}&name=${encodeURIComponent(file.name)}`);
-  xhr.send(file);
+    toast('Yüklendi: ' + file.name);
+    loadFiles();
+  } catch (err) {
+    prog.style.display = 'none';
+    toast(err.message || 'Yükleme hatası', true);
+  } finally {
+    btn.disabled = false;
+  }
 };
 
 // ── Map Editörü ──

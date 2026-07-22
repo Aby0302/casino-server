@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { URL } = require('url');
+const { Transform } = require('stream');
 const { pipeline } = require('stream/promises');
 
 const DATA_DIR = path.join(__dirname, 'data');
@@ -352,6 +353,32 @@ function sanitizeFileName(value) {
   return name;
 }
 
+function sanitizeUploadId(value) {
+  const id = String(value || '').replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 128);
+  return id || null;
+}
+
+function parseUploadNumber(value, fallback = 0) {
+  const n = Number(value == null || value === '' ? fallback : value);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+
+function uploadTempPath(target, uploadId = '') {
+  return uploadId ? `${target}.uploading-${uploadId}` : `${target}.uploading-${crypto.randomBytes(4).toString('hex')}`;
+}
+
+async function writeUploadBody(req, tmp, opts = {}) {
+  let received = 0;
+  const counter = new Transform({
+    transform(chunk, _encoding, callback) {
+      received += chunk.length;
+      callback(null, chunk);
+    },
+  });
+  await pipeline(req, counter, fs.createWriteStream(tmp, opts));
+  return received;
+}
+
 function resolveRoot(dirParam) {
   return ensureFileRoot(dirParam);
 }
@@ -493,18 +520,60 @@ function handleAdminRoute(req, res, ctx) {
       fs.mkdirSync(root, { recursive: true });
 
       const target = path.join(root, name);
-      const tmp = `${target}.uploading-${crypto.randomBytes(4).toString('hex')}`;
-      let received = 0;
+      const tmp = uploadTempPath(target);
+      let received;
 
       try {
-        req.on('data', chunk => { received += chunk.length; });
-        await pipeline(req, fs.createWriteStream(tmp));
+        received = await writeUploadBody(req, tmp);
         fs.renameSync(tmp, target);
       } catch (err) {
         fs.unlink(tmp, () => {});
         throw err;
       }
       return json(res, 200, { ok: true, name, size: received });
+    }
+
+    if (req.method === 'POST' && pathname === '/admin/api/files/upload-chunk') {
+      const root = resolveRoot(requestUrl.searchParams.get('dir'));
+      const name = sanitizeFileName(requestUrl.searchParams.get('name'));
+      const uploadId = sanitizeUploadId(requestUrl.searchParams.get('uploadId'));
+      const offset = parseUploadNumber(requestUrl.searchParams.get('offset'));
+      const total = parseUploadNumber(requestUrl.searchParams.get('total'));
+      if (!root || !name || !uploadId || offset == null || total == null) {
+        return json(res, 400, { ok: false, error: 'Gecersiz parca yukleme istegi' });
+      }
+      fs.mkdirSync(root, { recursive: true });
+
+      const target = path.join(root, name);
+      const tmp = uploadTempPath(target, uploadId);
+      if (offset === 0) {
+        try { fs.unlinkSync(tmp); } catch (err) {}
+      } else {
+        let currentSize = -1;
+        try { currentSize = fs.statSync(tmp).size; } catch (err) {}
+        if (currentSize !== offset) {
+          req.resume();
+          return json(res, 409, { ok: false, error: `Upload offset uyusmuyor. Beklenen ${currentSize}, gelen ${offset}.` });
+        }
+      }
+
+      let received;
+      try {
+        received = await writeUploadBody(req, tmp, { flags: offset === 0 ? 'w' : 'a' });
+      } catch (err) {
+        fs.unlink(tmp, () => {});
+        throw err;
+      }
+
+      const written = offset + received;
+      if (total > 0 && written > total) {
+        fs.unlink(tmp, () => {});
+        return json(res, 400, { ok: false, error: 'Upload parcasi toplam boyutu asti' });
+      }
+
+      const done = total === 0 || written >= total;
+      if (done) fs.renameSync(tmp, target);
+      return json(res, 200, { ok: true, name, uploadId, received, written, total, done });
     }
 
     if (req.method === 'DELETE' && pathname === '/admin/api/files') {
