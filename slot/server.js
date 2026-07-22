@@ -448,6 +448,10 @@ function isSlotEntryUrl(url) {
   return url === '/' || url === '/slot' || url === '/slot/' || url === '/index.html';
 }
 
+function isAuthenticatedSlotRequest(req, url) {
+  return (url === '/slot' || url === '/slot/' || url.startsWith('/slot/')) && !!getAuthPlayer(req);
+}
+
 // Read-only lobby assets the Godot client loads directly (3D lobby, machine
 // models, ambient audio, hot-update DLLs). Game code stays off the Godot bundle;
 // it is served only to internal cloud renderers or token-gated client sessions.
@@ -533,7 +537,8 @@ const server = http.createServer((req, res) => {
   }
 
   // Block non-lobby, non-game routes for external clients
-  if (!isInternalGameRequest(req)) {
+  const directSlotRequest = isAuthenticatedSlotRequest(req, url);
+  if (!isInternalGameRequest(req) && !directSlotRequest) {
     if (isSlotEntryUrl(url)) {
       return redirectToCloud(res, 'slot');
     }
@@ -1134,6 +1139,8 @@ wss.on('connection', (ws, req) => {
   const internal = isInternalGameRequest(req);
   const channel = socketChannelFromRequest(req);
   const sessionID = channel === 'admin' ? null : sessionIDFromRequest(req);
+  const authPlayer = getAuthPlayer(req);
+  const canMutateWallet = internal || (!!authPlayer && authPlayer.id === sessionID);
   wsSessions.set(ws, { sessionID, channel });
 
   if (channel === 'admin') {
@@ -1152,7 +1159,7 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
-    if (!internal) {
+    if (!canMutateWallet) {
       ws.send(JSON.stringify({ type: 'error', message: 'Read-only session: play through the cloud stream' }));
       return;
     }

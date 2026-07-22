@@ -431,6 +431,8 @@ async function openGame(game) {
   let url = game.launch;
   if (game.id === 'sugar-rush') {
     url = '/client/start?source=web-lobby&game=sugar-rush&sessionID=' + encodeURIComponent(sessionID);
+  } else if (game.id === 'slot') {
+    url = '/slot/?sessionID=' + encodeURIComponent(sessionID);
   }
 
   frame.src = url;
