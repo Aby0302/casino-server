@@ -919,7 +919,15 @@ func _load_remote_config() -> void:
 
 
 func _hot_reload_config() -> void:
-    set_status("Config hot reload baslatiliyor...")
+    if player_body != null:
+        var eye := _current_eye_position()
+        var look_dir := -player_body.global_transform.basis.z
+        pending_eye_position = eye
+        pending_look_at = eye + look_dir * 100.0
+        has_pending_pose = true
+    _screen_state = "loading"
+    _show_loading_screen()
+    _update_loading_progress(0, "Config guncelleniyor...")
     _clear_machines()
     _clear_teleports()
     map_collider_count = 0
@@ -930,6 +938,7 @@ func _hot_reload_config() -> void:
     if map_request != null:
         map_request.queue_free()
         map_request = null
+    _update_loading_progress(10, "Config indiriliyor...")
     _load_remote_config()
 
 
@@ -1280,7 +1289,10 @@ func _apply_map_transform(map_node: Node, config: Dictionary) -> void:
 func _download_machines(machines_value: Variant) -> void:
     if typeof(machines_value) != TYPE_ARRAY:
         set_status("Loaded map. No machines in config.")
-        _complete_config_hot_reload()
+        if hot_reload_in_progress:
+            _complete_config_hot_reload()
+        elif _screen_state == "loading":
+            _complete_game_load()
         return
 
     var machine_list: Array = machines_value
@@ -1288,8 +1300,9 @@ func _download_machines(machines_value: Variant) -> void:
     _loaded_machine_count = 0
     if machine_list.is_empty():
         set_status("Loaded map. No machines in config.")
-        _complete_config_hot_reload()
-        if _screen_state == "loading":
+        if hot_reload_in_progress:
+            _complete_config_hot_reload()
+        elif _screen_state == "loading":
             _complete_game_load()
         return
 
@@ -1371,9 +1384,11 @@ func _load_machine_from_path(machine: Dictionary, local_path: String) -> void:
         var p := 45.0 + (float(_loaded_machine_count) / float(max(1, _expected_machine_count))) * 40.0
         _update_loading_progress(p, "Makine yukleniyor: %s/%s" % [_loaded_machine_count, _expected_machine_count])
         if _loaded_machine_count >= _expected_machine_count:
-            _complete_game_load()
-
-    if hot_reload_in_progress and _hot_reload_target_machines > 0 and machines.size() >= _hot_reload_target_machines:
+            if hot_reload_in_progress:
+                _complete_config_hot_reload()
+            else:
+                _complete_game_load()
+    elif hot_reload_in_progress and _hot_reload_target_machines > 0 and machines.size() >= _hot_reload_target_machines:
         _complete_config_hot_reload()
 
     if OS.get_environment("CASINO_AUTOSTART_STREAM") == "1" and active_machine_index < 0:
@@ -1398,7 +1413,11 @@ func _complete_config_hot_reload() -> void:
         return
     hot_reload_in_progress = false
     _hot_reload_target_machines = 0
-    set_status("Config hot reload tamamlandi")
+    _screen_state = "game"
+    _hide_loading_screen()
+    if has_pending_pose and world_colliders_ready:
+        _set_player_pose(pending_eye_position, pending_look_at)
+    set_status("Config guncellendi")
 
 
 func _apply_model_parts(root: Node, parts_value: Variant) -> void:
