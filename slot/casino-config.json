@@ -1,5 +1,10 @@
 {
   "map": "casino-lobby.glb",
+  "mapTransform": {
+    "position": [0.0, 0.0, 0.0],
+    "rotation": [0.0, 0.0, 0.0],
+    "scale": [1.0, 1.0, 1.0]
+  },
   "spawn": {
     "position": [720.5, -236.0, 140.0],
     "lookAt": [620.0, -236.0, -150.0]

@@ -799,6 +799,7 @@ func _load_map_from_path(config: Dictionary, local_path: String) -> void:
             set_status("Map GLB failed to load: %s" % local_path)
             return
 
+    _apply_map_transform(map_node, config)
     map_node.name = "CasinoLobby"
     world_root.add_child(map_node)
 
@@ -820,6 +821,18 @@ func _load_map_from_path(config: Dictionary, local_path: String) -> void:
 
     set_status("Loaded map: %s (%s colliders)" % [local_path, map_collider_count])
     _download_machines(config.get("machines", []))
+
+
+func _apply_map_transform(map_node: Node, config: Dictionary) -> void:
+    if not map_node is Node3D:
+        return
+
+    var transform_value: Variant = config.get("mapTransform", {})
+    var map_transform: Dictionary = transform_value if typeof(transform_value) == TYPE_DICTIONARY else {}
+    var node_3d := map_node as Node3D
+    node_3d.position = _to_vector3(map_transform.get("position", []), Vector3.ZERO)
+    node_3d.rotation_degrees = _to_vector3(map_transform.get("rotation", []), Vector3.ZERO)
+    node_3d.scale = _to_vector3(map_transform.get("scale", []), Vector3.ONE)
 
 
 func _download_machines(machines_value: Variant) -> void:

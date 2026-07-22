@@ -201,7 +201,7 @@
                 <div id="map3dCanvasHost"></div>
                 <div id="map3dStatus">3D editör yükleniyor...</div>
               </div>
-              <div class="map3d-help">Unity kısayolları: W taşı, E döndür, R ölçek, F odak, Delete sil, Ctrl+D çoğalt. Hierarchy'den makine, spawn veya alt nesne seçip gizmo eksenlerinden düzenle.</div>
+              <div class="map3d-help">Unity kısayolları: W taşı, E döndür, R ölçek, F odak, Delete sil, Ctrl+D çoğalt. Hierarchy'den harita, makine, spawn veya alt nesne seçip gizmo eksenlerinden düzenle.</div>
             </div>
             <aside class="unity-panel">
               <h3>Inspector</h3>
@@ -217,6 +217,7 @@
               <label class="vec">Spawn <span id="cfgSpawnPos"></span></label>
               <label class="vec">Bakış <span id="cfgSpawnLook"></span></label>
             </div>
+            <div id="cfgMapTransform" class="grid3"></div>
           </fieldset>
           <div id="machines"></div>
         </div>
@@ -480,6 +481,7 @@ const MACHINE_TEMPLATE = () => ({
 
 const SPAWN_POSITION_KEY = 'spawn:position';
 const SPAWN_LOOK_KEY = 'spawn:lookAt';
+const MAP_KEY = 'map:root';
 const EDIT_PARTS = {
   seat: { label: 'Koltuk', path: 'seat', positionKey: 'position', sizeKey: 'size', shapeKey: 'shape', color: 0x4cc46a },
   screen: { label: 'Ekran', path: 'screen', positionKey: 'position', rotationKey: 'rotation', sizeKey: 'size', color: 0xe05298 },
@@ -490,8 +492,28 @@ const EDIT_PARTS = {
 function machineKey(idx) { return 'machine:' + idx; }
 function machinePartKey(idx, part) { return `machine:${idx}:${part}`; }
 
+function ensureVecDefault(obj, key, defaults) {
+  obj[key] = Array.isArray(obj[key]) ? obj[key] : defaults.slice();
+  while (obj[key].length < defaults.length) obj[key].push(defaults[obj[key].length] ?? 0);
+  return obj[key];
+}
+
+function ensureMapTransform() {
+  config.mapTransform = config.mapTransform && typeof config.mapTransform === 'object' ? config.mapTransform : {};
+  ensureVecDefault(config.mapTransform, 'position', [0, 0, 0]);
+  ensureVecDefault(config.mapTransform, 'rotation', [0, 0, 0]);
+  ensureVecDefault(config.mapTransform, 'scale', [1, 1, 1]);
+  return config.mapTransform;
+}
+
 function getConfigTarget(key = selectedObjectKey) {
   if (!config) return null;
+  if (key === MAP_KEY) {
+    return {
+      key, kind: 'map', label: 'Harita Modeli', object: ensureMapTransform(),
+      positionKey: 'position', rotationKey: 'rotation', scaleKey: 'scale',
+    };
+  }
   config.spawn = config.spawn || { position: [0, 0, 0], lookAt: [0, 0, 0] };
   if (key === SPAWN_POSITION_KEY) {
     return { key, kind: 'spawnPosition', label: 'Spawn Pozisyonu', object: config.spawn, positionKey: 'position', lockKey: 'positionLocked' };
@@ -534,6 +556,7 @@ function getConfigTarget(key = selectedObjectKey) {
 
 function normalizeSelectedObjectKey() {
   if (getConfigTarget(selectedObjectKey)) return selectedObjectKey;
+  if (config && config.map) return MAP_KEY;
   if (config && config.machines && config.machines[selectedMachineIndex]) return machineKey(selectedMachineIndex);
   if (config && config.spawn) return SPAWN_POSITION_KEY;
   return selectedObjectKey;
@@ -711,6 +734,15 @@ function renderConfig(opts = {}) {
 
   const mapSel = selectInput(lists.maps.filter(n => n.endsWith('.glb')), config.map, v => config.map = v, true);
   $('#cfgMap').replaceWith(mapSel); mapSel.id = 'cfgMap';
+  const mapTransform = ensureMapTransform();
+  const mapLocked = isTargetLocked(MAP_KEY);
+  const mapTransformHost = $('#cfgMapTransform');
+  if (mapTransformHost) {
+    mapTransformHost.innerHTML = '';
+    mapTransformHost.appendChild(vecFieldset('Harita pozisyonu', mapTransform, 'position', 3, mapLocked));
+    mapTransformHost.appendChild(vecFieldset('Harita rotasyonu', mapTransform, 'rotation', 3, mapLocked));
+    mapTransformHost.appendChild(vecFieldset('Harita ölçeği', mapTransform, 'scale', 3, mapLocked));
+  }
 
   config.spawn = config.spawn || { position: [0, 0, 0], lookAt: [0, 0, 0] };
   $('#cfgSpawnPos').className = 'vec'; $('#cfgSpawnLook').className = 'vec';
@@ -902,6 +934,7 @@ function refreshHierarchy() {
     </button>`;
   };
   const rows = [
+    button(MAP_KEY, '▤ Harita modeli', config.map || 'harita yok'),
     button(SPAWN_POSITION_KEY, '◎ Spawn pozisyonu', 'config.spawn.position'),
     button(SPAWN_LOOK_KEY, '⌖ Spawn bakış noktası', 'config.spawn.lookAt'),
   ];
@@ -940,6 +973,17 @@ function update3DInspector() {
   const lists = config.__lists || { models: [], audio: [] };
   host.innerHTML = '';
   const title = document.createElement('div');
+  if (target.kind === 'map') {
+    const locked = isTargetLocked(target);
+    title.innerHTML = `<b>${esc(target.label)}</b><div class="muted">${esc(config.map || 'Harita seçilmedi')} · config.mapTransform</div>`;
+    host.appendChild(title);
+    inspectorLockRow(host, target);
+    inspectorSelectRow(host, 'Harita Dosyası', lists.maps || [], config.map || '', value => { config.map = value; syncRaw(); refreshHierarchy(); rebuild3DScene(); }, '', locked);
+    inspectorVecRow(host, 'Position', target.object, 'position', 3, locked);
+    inspectorVecRow(host, 'Rotation', target.object, 'rotation', 3, locked);
+    inspectorVecRow(host, 'Scale', target.object, 'scale', 3, locked);
+    return;
+  }
   if (target.kind === 'spawnPosition' || target.kind === 'spawnLookAt') {
     title.innerHTML = `<b>${esc(target.label)}</b><div class="muted">Spawn noktası ve bakış hedefi</div>`;
     host.appendChild(title);
@@ -1211,6 +1255,8 @@ async function rebuild3DScene() {
         obj.userData.isMap = true;
         if (obj.isMesh) { obj.receiveShadow = true; obj.frustumCulled = false; }
       });
+      registerEditObject(MAP_KEY, map3d.mapObject, { kind: 'map' });
+      applyConfigTransformToObject(map3d.mapObject, ensureMapTransform(), getConfigTarget(MAP_KEY));
       map3d.scene.add(map3d.mapObject);
     } catch (err) {
       show3DStatus(`Harita yüklenemedi (${config.map}); kutu marker'lar aktif`, true);
@@ -1353,6 +1399,7 @@ function rebuildPartGeometry(part, shape) {
 
 function update3DTransforms(opts = {}) {
   if (!map3d.scene || !config) return;
+  if (map3d.mapObject) applyConfigTransformToObject(map3d.mapObject, ensureMapTransform(), getConfigTarget(MAP_KEY));
   if (map3d.machineGroups.length !== (config.machines || []).length) {
     rebuild3DScene();
     return;
@@ -1586,6 +1633,8 @@ function onTransformObjectChange() {
       target.object[target.positionKey] = [object.position.x, object.position.y, object.position.z].map(n => Number(n.toFixed(2)));
     } else if (map3d.transformMode === 'rotate' && target.rotationKey) {
       target.object[target.rotationKey] = [radToDeg(object.rotation.x), radToDeg(object.rotation.y), radToDeg(object.rotation.z)].map(n => Number(n.toFixed(2)));
+    } else if (map3d.transformMode === 'scale' && target.scaleKey) {
+      target.object[target.scaleKey] = [object.scale.x, object.scale.y, object.scale.z].map(n => Number(n.toFixed(4)));
     } else if (map3d.transformMode === 'scale' && (target.sizeKey || target.radiusKey)) {
       target.object[target.sizeKey || target.radiusKey] = [object.scale.x, object.scale.y, object.scale.z].map(n => Number(n.toFixed(2)));
     }
