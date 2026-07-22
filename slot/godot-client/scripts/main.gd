@@ -57,6 +57,8 @@ var auth_email_edit: LineEdit
 var auth_password_edit: LineEdit
 var auth_submit_button: Button
 var open_game_button: Button
+var config_websocket: WebSocketPeer = WebSocketPeer.new()
+var config_websocket_started := false
 var websocket: WebSocketPeer = WebSocketPeer.new()
 var websocket_started := false
 var websocket_last_state := WebSocketPeer.STATE_CLOSED
@@ -104,6 +106,7 @@ func _ready() -> void:
     _refresh_player_ui()
     _refresh_machine_ui()
     _load_remote_config()
+    _connect_config_socket()
     if auth_cookie.is_empty():
         balance_label.text = "Bakiye: giris bekleniyor"
         if auth_result_label != null:
@@ -116,8 +119,27 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
+    _poll_config_socket()
     _poll_balance_socket()
     _poll_cloud_stream()
+
+
+func _poll_config_socket() -> void:
+    if not config_websocket_started:
+        return
+
+    config_websocket.poll()
+
+    while config_websocket.get_available_packet_count() > 0:
+        var payload := config_websocket.get_packet().get_string_from_utf8()
+        var message: Variant = JSON.parse_string(payload)
+        if typeof(message) == TYPE_DICTIONARY:
+            if message.get("type") == "config:updated" and not hot_reload_in_progress:
+                hot_reload_in_progress = true
+                _hot_reload_config()
+
+    if config_websocket.get_ready_state() == WebSocketPeer.STATE_CLOSED:
+        config_websocket_started = false
 
 
 func _poll_balance_socket() -> void:
@@ -628,8 +650,14 @@ func _load_remote_config() -> void:
 func _hot_reload_config() -> void:
     set_status("Config hot reload baslatiliyor...")
     _clear_machines()
+    map_collider_count = 0
+    world_colliders_ready = false
     if config_request != null:
         config_request.queue_free()
+        config_request = null
+    if map_request != null:
+        map_request.queue_free()
+        map_request = null
     _load_remote_config()
 
 
@@ -642,6 +670,7 @@ func _clear_machines() -> void:
     cloud_stream_started = false
     cloud_stream_requested = false
     _stop_cloud_stream()
+    machine_collider_count = 0
     for entry in machines:
         var node_val: Variant = entry.get("node")
         if node_val is Node:
@@ -881,11 +910,13 @@ func _apply_map_transform(map_node: Node, config: Dictionary) -> void:
 func _download_machines(machines_value: Variant) -> void:
     if typeof(machines_value) != TYPE_ARRAY:
         set_status("Loaded map. No machines in config.")
+        _complete_config_hot_reload()
         return
 
     var machine_list: Array = machines_value
     if machine_list.is_empty():
         set_status("Loaded map. No machines in config.")
+        _complete_config_hot_reload()
         return
 
     for machine_value in machine_list:
@@ -962,9 +993,7 @@ func _load_machine_from_path(machine: Dictionary, local_path: String) -> void:
     set_status("Loaded machine: %s (%s colliders)" % [machine_node.name, added_machine_colliders])
 
     if hot_reload_in_progress and _hot_reload_target_machines > 0 and machines.size() >= _hot_reload_target_machines:
-        hot_reload_in_progress = false
-        _hot_reload_target_machines = 0
-        set_status("Config hot reload tamamlandi")
+        _complete_config_hot_reload()
 
     if OS.get_environment("CASINO_AUTOSTART_STREAM") == "1" and active_machine_index < 0:
         call_deferred("_start_machine_game", machines.size() - 1)
@@ -983,6 +1012,14 @@ func _load_gltf(path: String) -> Node:
     return document.generate_scene(state)
 
 
+func _complete_config_hot_reload() -> void:
+    if not hot_reload_in_progress:
+        return
+    hot_reload_in_progress = false
+    _hot_reload_target_machines = 0
+    set_status("Config hot reload tamamlandi")
+
+
 func _apply_model_parts(root: Node, parts_value: Variant) -> void:
     if typeof(parts_value) != TYPE_DICTIONARY:
         return
@@ -990,16 +1027,27 @@ func _apply_model_parts(root: Node, parts_value: Variant) -> void:
     _apply_model_parts_recursive(root, parts_value as Dictionary, {"mesh_index": 0})
 
 
+func _model_part_value(parts: Dictionary, node_name: String, mesh_index: int) -> Variant:
+    var indexed_prefix := "%03d__" % mesh_index
+    var exact_indexed_key := "%s%s" % [indexed_prefix, node_name]
+    if parts.has(exact_indexed_key):
+        return parts.get(exact_indexed_key)
+
+    for raw_key in parts.keys():
+        var key := String(raw_key)
+        if key.begins_with(indexed_prefix):
+            return parts.get(raw_key)
+
+    return parts.get(node_name)
+
+
 func _apply_model_parts_recursive(node: Node, parts: Dictionary, state: Dictionary) -> void:
     if node is Node3D:
         var part_value: Variant = parts.get(node.name)
         if node is MeshInstance3D:
             var mesh_index := int(state.get("mesh_index", 0))
-            var part_key := "%03d__%s" % [mesh_index, node.name]
             state["mesh_index"] = mesh_index + 1
-            var indexed_part_value: Variant = parts.get(part_key)
-            if typeof(indexed_part_value) == TYPE_DICTIONARY:
-                part_value = indexed_part_value
+            part_value = _model_part_value(parts, node.name, mesh_index)
         if typeof(part_value) == TYPE_DICTIONARY:
             var part: Dictionary = part_value
             var node_3d := node as Node3D
@@ -2169,6 +2217,19 @@ func _refresh_machine_ui() -> void:
     machine_label.text = "Makineler: %s | Yakinda: %s | Carpisma: harita %s, makine %s" % [machines.size(), nearby_text, map_collider_count, machine_collider_count]
     if open_game_button != null:
         open_game_button.disabled = not authenticated or nearby_machine_index < 0
+
+
+func _connect_config_socket() -> void:
+    config_websocket = WebSocketPeer.new()
+    var socket_url := _base_url().replace("https://", "wss://").replace("http://", "ws://")
+    socket_url += "/?game=admin"
+
+    var err := config_websocket.connect_to_url(socket_url)
+    if err != OK:
+        push_warning("Config socket failed: %s" % error_string(err))
+        return
+
+    config_websocket_started = true
 
 
 func _connect_balance_socket() -> void:

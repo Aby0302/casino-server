@@ -2231,7 +2231,7 @@ $('#cfgSave').onclick = async () => {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ config: toSave }),
     });
-    toast('Kaydedildi — Unity bir sonraki lobi yüklemesinde alır');
+    toast('Kaydedildi — Godot lobisi canlı güncellenir');
   } catch (e) { toast(e.message, true); }
 };
 
