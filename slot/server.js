@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
+const rng = require('../server/rng');
 const { handleCloudStreamRoute, isInternalGameRequest, listCloudSessions } = require('./cloud-stream');
 const { handleAdminRoute, persistBalance, getRegisteredPlayer, registerPublicPlayer, getConfigFilePath, resolveAssetFile } = require('./admin');
 
@@ -579,7 +580,7 @@ function loadSugarBooks() {
 function pickSugarBook(mode) {
   const books = loadSugarBooks();
   if (books.length > 0) {
-    return books[Math.floor(Math.random() * books.length)];
+    return rng.pickRandom(books, 'slot/server.js:pickSugarBook');
   }
 
   return {
@@ -709,7 +710,7 @@ function sugarConfig() {
 function generateFallbackSugarEvents() {
   const names = ['L3', 'L2', 'L1', 'H4', 'H3', 'H2', 'H1', 'S'];
   const board = Array.from({ length: 7 }, (_, row) => Array.from({ length: 7 }, (_, reel) => {
-    const id = Math.floor(Math.random() * names.length);
+    const id = rng.randomInt(0, names.length - 1, 'slot/server.js:fallbackSugar');
     return { symbol: names[id], id, reel, row };
   }));
 
@@ -724,7 +725,7 @@ function generateFallbackSugarEvents() {
 const SYMBOLS = ['heart', 'diamond', 'banana', 'apple', 'orange', 'watermelon', 'plum', 'grape', 'scatter'];
 
 function randomSymbol() {
-  return { id: SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)] };
+  return { id: rng.pickRandom(SYMBOLS, 'slot/server.js:randomSymbol') };
 }
 
 function generateGrid() {
@@ -880,8 +881,7 @@ wss.on('connection', (ws, req) => {
               wins: [{ positions: winPositions }]
             });
 
-            // Drop event (regenerate the winning cells)
-            const dropGrid = grid.map(col => col.map(s => randomSymbol()));
+            const dropGrid = grid.map(col => col.map(() => randomSymbol()));
             events.push({ type: 'drop', grid: dropGrid });
           }
 

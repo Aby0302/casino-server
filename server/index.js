@@ -3,6 +3,7 @@ const { createServer } = require('http');
 const { WebSocketServer } = require('ws');
 const path = require('path');
 
+const rng = require('./rng');
 const { PokerTable, PHASES } = require('./games/poker');
 const { BlackjackTable } = require('./games/blackjack');
 const { fullSpin } = require('./games/slot');
@@ -69,6 +70,72 @@ app.post('/api/balance/:clientId', auth, (req, res) => {
   if (typeof amount !== 'number') return res.status(400).json({ error: 'amount required' });
   setBalance(req.params.clientId, getBalance(req.params.clientId) + amount);
   res.json({ balance: getBalance(req.params.clientId) });
+});
+
+// RNG management API
+app.get('/api/rng/stats', auth, (req, res) => {
+  res.json(rng.getStats());
+});
+
+app.get('/api/rng/audit', auth, (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 100, 1000);
+  res.json({ entries: rng.getAuditLog(limit) });
+});
+
+app.post('/api/rng/clear-audit', auth, (req, res) => {
+  rng.clearAuditLog();
+  res.json({ ok: true });
+});
+
+app.post('/api/rng/request', auth, (req, res) => {
+  const { type, min, max } = req.body || {};
+  const source = 'api:' + (req.headers['x-api-token'] ? 'authenticated' : 'anonymous');
+  let result;
+  switch (type) {
+    case 'int':
+      if (typeof min !== 'number' || typeof max !== 'number') {
+        return res.status(400).json({ error: 'min and max required for int type' });
+      }
+      result = rng.randomInt(min, max, source);
+      break;
+    case 'float':
+      result = rng.randomFloat(source);
+      break;
+    case 'seed':
+      result = rng.randomSeed(source);
+      break;
+    case 'shuffle':
+      if (!Array.isArray(req.body.array)) {
+        return res.status(400).json({ error: 'array required for shuffle type' });
+      }
+      result = rng.shuffle(req.body.array, source);
+      break;
+    default:
+      return res.status(400).json({ error: 'type must be int, float, seed, or shuffle' });
+  }
+  res.json({ type, result });
+});
+
+// Slot config API
+const slotConfig = require('./games/slot-config');
+const slotGame = require('./games/slot');
+
+app.get('/api/slot/config', auth, (req, res) => {
+  res.json({ ok: true, config: slotConfig.get() });
+});
+
+app.put('/api/slot/config', auth, (req, res) => {
+  const partial = req.body.config;
+  if (!partial || typeof partial !== 'object') {
+    return res.status(400).json({ error: 'config field required' });
+  }
+  slotConfig.update(partial);
+  res.json({ ok: true, config: slotConfig.get() });
+});
+
+app.post('/api/slot/config/reset', auth, (req, res) => {
+  slotConfig.reset();
+  res.json({ ok: true, config: slotConfig.get() });
 });
 
 // WebSocket routing
@@ -143,7 +210,7 @@ wss.on('connection', (ws, req) => {
             if (bet <= 0) return send(ws, { type: 'error', message: 'insufficient balance' });
 
             setBalance(clientId, getBalance(clientId) - bet);
-            const seed = (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
+            const seed = rng.randomSeed('server/index.js:spin');
             const result = fullSpin(bet, seed);
             setBalance(clientId, getBalance(clientId) + result.totalWin);
 

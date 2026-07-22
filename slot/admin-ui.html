@@ -124,6 +124,7 @@
   <button data-tab="players" class="active">Oyuncular</button>
   <button data-tab="files">Dosyalar</button>
   <button data-tab="map">Map Editör</button>
+  <button data-tab="rtp">RTP</button>
   <button data-tab="status">Durum</button>
 </nav>
 
@@ -228,6 +229,37 @@
     <div id="rawView" style="display:none">
       <textarea id="rawJson" spellcheck="false"></textarea>
     </div>
+  </section>
+
+  <!-- RTP / Slot Konfigurasyonu -->
+  <section id="tab-rtp" style="display:none">
+    <h2>Slot Oyunu Matematik Konfigurasyonu</h2>
+    <div class="row">
+      <button class="act gold" id="rtpSave">Kaydet</button>
+      <button class="act" id="rtpReload">Yeniden Yükle</button>
+      <button class="act danger" id="rtpReset">Varsayılana Dön</button>
+    </div>
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 10px;">
+      <fieldset>
+        <legend>Temel Parametreler</legend>
+        <div class="row"><label style="min-width:150px">Min Win Threshold</label><input type="number" id="rtpMinWin" min="3" max="30" style="width:80px"></div>
+        <div class="row"><label style="min-width:150px">Max Cascade Derinliği</label><input type="number" id="rtpMaxCascade" min="0" max="20" style="width:80px"></div>
+        <div class="row"><label style="min-width:150px">Pay Scale (çarpan)</label><input type="number" id="rtpPayScale" min="0.01" max="5" step="0.01" style="width:80px"></div>
+      </fieldset>
+      <fieldset>
+        <legend>RTP Bilgisi (referans)</legend>
+        <div class="row" style="justify-content:space-between"><span>Hit Frequency (tahmini)</span><strong id="rtpHitFreq">-</strong></div>
+        <div class="row" style="justify-content:space-between"><span>RTP (taban, tahmini)</span><strong id="rtpBaseRtp">-</strong></div>
+        <div class="row" style="justify-content:space-between"><span>Maksimum kazanç (teorik)</span><strong id="rtpMaxWin">-</strong></div>
+      </fieldset>
+    </div>
+    <h3 style="margin-top:16px">Sembol Ağırlıkları</h3>
+    <div class="row muted">Ağırlıkları değiştirerek RTP'yi ince ayarlayabilirsiniz. Yüksek ağırlık = daha sık görünme.</div>
+    <table>
+      <thead><tr><th>Sembol</th><th>Ağırlık</th><th>8+</th><th>12+</th><th>15+</th><th>20+</th><th>25+</th><th>30</th></tr></thead>
+      <tbody id="rtpSymbolBody"></tbody>
+    </table>
+    <p class="muted" style="margin-top:8px">Değişiklikler kaydedildikten sonra bir sonraki spin'de geçerli olur.</p>
   </section>
 
   <!-- Durum -->
@@ -386,6 +418,7 @@ document.querySelectorAll('nav button').forEach(btn => btn.onclick = () => {
   if (btn.dataset.tab === 'players') loadPlayers();
   if (btn.dataset.tab === 'files') loadFiles();
   if (btn.dataset.tab === 'map') loadConfig();
+  if (btn.dataset.tab === 'rtp') loadSlotConfig();
   if (btn.dataset.tab === 'status') loadStatus();
 });
 
@@ -2094,6 +2127,145 @@ $('#cfgSave').onclick = async () => {
     });
     toast('Kaydedildi — Unity bir sonraki lobi yüklemesinde alır');
   } catch (e) { toast(e.message, true); }
+};
+
+// ── RTP / Slot Konfigurasyonu ──
+async function loadSlotConfig() {
+  try {
+    const { config: cfg } = await api('/admin/api/slot-config');
+    $('#rtpMinWin').value = cfg.minWin ?? 8;
+    $('#rtpMaxCascade').value = cfg.maxCascade ?? 6;
+    $('#rtpPayScale').value = cfg.payScale ?? 1.0;
+
+    const defaultSymbols = [
+      { id: 'heart',    weight: 7,  pay: { 8: 10, 12: 20, 15: 40, 20: 80, 25: 120, 30: 200 } },
+      { id: 'diamond',  weight: 8,  pay: { 8: 15, 12: 35, 15: 70, 20: 140, 25: 260, 30: 500 } },
+      { id: 'banana',   weight: 10, pay: { 8: 8,  12: 16, 15: 30, 20: 60,  25: 90,  30: 160 } },
+      { id: 'apple',    weight: 12, pay: { 8: 5,  12: 10, 15: 20, 20: 40,  25: 70,  30: 110 } },
+      { id: 'orange',   weight: 14, pay: { 8: 5,  12: 10, 15: 20, 20: 40,  25: 70,  30: 110 } },
+      { id: 'watermelon', weight: 15, pay: { 8: 4,  12: 8,  15: 15, 20: 30,  25: 55,  30: 90 } },
+      { id: 'plum',     weight: 16, pay: { 8: 3,  12: 6,  15: 12, 20: 24,  25: 40,  30: 75 } },
+      { id: 'grape',    weight: 18, pay: { 8: 2,  12: 4,  15: 9,  20: 18,  25: 30,  30: 60 } },
+    ];
+
+    $('#rtpSymbolBody').innerHTML = defaultSymbols.map(sym => {
+      const override = cfg.symbolOverrides && cfg.symbolOverrides[sym.id];
+      const w = override && override.weight != null ? override.weight : sym.weight;
+      const payScale = cfg.payScale ?? 1.0;
+      const pay = override && override.pay ? override.pay : sym.pay;
+      const tiers = [8, 12, 15, 20, 25, 30];
+      const payHtml = tiers.map(t => {
+        const v = pay[t];
+        return `<td>${v != null ? Math.round(v * payScale) + '×' : '-'}</td>`;
+      }).join('');
+      return `<tr>
+        <td><strong>${sym.id}</strong></td>
+        <td><input type="number" class="rtp-w" data-sid="${sym.id}" value="${w}" min="0" max="100" style="width:70px"></td>
+        ${payHtml}
+      </tr>`;
+    }).join('');
+
+    updateRtpEstimate(cfg);
+  } catch (e) { console.warn('[rtp] yukleme hatasi:', e); }
+}
+
+function updateRtpEstimate(cfg) {
+  const ps = cfg.payScale ?? 1.0;
+  const mw = cfg.minWin ?? 8;
+  const defaultSymbols = [
+    { id: 'heart',    weight: 7,  pay: { 8: 10, 12: 20, 15: 40, 20: 80, 25: 120, 30: 200 } },
+    { id: 'diamond',  weight: 8,  pay: { 8: 15, 12: 35, 15: 70, 20: 140, 25: 260, 30: 500 } },
+    { id: 'banana',   weight: 10, pay: { 8: 8,  12: 16, 15: 30, 20: 60,  25: 90,  30: 160 } },
+    { id: 'apple',    weight: 12, pay: { 8: 5,  12: 10, 15: 20, 20: 40,  25: 70,  30: 110 } },
+    { id: 'orange',   weight: 14, pay: { 8: 5,  12: 10, 15: 20, 20: 40,  25: 70,  30: 110 } },
+    { id: 'watermelon', weight: 15, pay: { 8: 4,  12: 8,  15: 15, 20: 30,  25: 55,  30: 90 } },
+    { id: 'plum',     weight: 16, pay: { 8: 3,  12: 6,  15: 12, 20: 24,  25: 40,  30: 75 } },
+    { id: 'grape',    weight: 18, pay: { 8: 2,  12: 4,  15: 9,  20: 18,  25: 30,  30: 60 } },
+  ];
+
+  // Apply config overrides + payScale
+  const symbols = defaultSymbols.map(sym => {
+    const override = cfg.symbolOverrides && cfg.symbolOverrides[sym.id];
+    const w = override && override.weight != null ? override.weight : sym.weight;
+    const pay = {};
+    const srcPay = override && override.pay ? override.pay : sym.pay;
+    for (const [k, v] of Object.entries(srcPay)) pay[k] = v * ps;
+    return { id: sym.id, weight: w, pay };
+  });
+
+  // Quick binomial estimation for base RTP (single spin, no cascades)
+  const totalWeight = symbols.reduce((s, x) => s + x.weight, 0);
+  if (totalWeight === 0) return;
+
+  let hitFreq = 0;
+  let baseRtp = 0;
+  const grid = 30;
+
+  function binomialProb(n, k, p) {
+    if (k > n || k < 0) return 0;
+    let logP = 0;
+    for (let i = 0; i < k; i++) logP += Math.log(n - i) - Math.log(i + 1);
+    logP += k * Math.log(p) + (n - k) * Math.log(1 - p);
+    return Math.exp(logP);
+  }
+
+  for (const sym of symbols) {
+    const p = sym.weight / totalWeight;
+    const tiers = Object.keys(sym.pay).map(Number).sort((a, b) => a - b);
+    for (let k = mw; k <= grid; k++) {
+      const prob = binomialProb(grid, k, p);
+      if (prob === 0) continue;
+      hitFreq += prob;
+      let pay = 0;
+      for (const t of tiers) {
+        if (t <= k) pay = sym.pay[t];
+      }
+      baseRtp += prob * pay;
+    }
+  }
+
+  $('#rtpHitFreq').textContent = (hitFreq * 100).toFixed(2) + '%';
+  $('#rtpBaseRtp').textContent = (baseRtp * 100).toFixed(2) + '%';
+
+  // Theoretical max win
+  let maxWin = 0;
+  for (const sym of symbols) {
+    const lastTier = Object.values(sym.pay).pop() || 0;
+    maxWin = Math.max(maxWin, lastTier);
+  }
+  $('#rtpMaxWin').textContent = maxWin.toFixed(0) + '×';
+}
+
+async function saveSlotConfig() {
+  const overrides = {};
+  document.querySelectorAll('.rtp-w').forEach(input => {
+    const sid = input.dataset.sid;
+    const val = parseInt(input.value);
+    if (val > 0) overrides[sid] = { weight: val };
+  });
+
+  const cfg = {
+    minWin: parseInt($('#rtpMinWin').value) || 8,
+    maxCascade: parseInt($('#rtpMaxCascade').value) || 6,
+    payScale: parseFloat($('#rtpPayScale').value) || 1.0,
+    symbolOverrides: overrides,
+  };
+
+  await api('/admin/api/slot-config', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ config: cfg }),
+  });
+  toast('Slot konfigurasyonu kaydedildi — sonraki spin\'de geçerli');
+  loadSlotConfig();
+}
+
+$('#rtpSave').onclick = saveSlotConfig;
+$('#rtpReload').onclick = loadSlotConfig;
+$('#rtpReset').onclick = async () => {
+  if (!confirm('Tum RTP ayarlari varsayilana don sun. Emin misiniz?')) return;
+  await api('/admin/api/slot-config/reset', { method: 'POST' });
+  toast('Varsayilan konfigurasyona donuldu');
+  loadSlotConfig();
 };
 
 // ── Durum ──

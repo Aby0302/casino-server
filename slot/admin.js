@@ -471,6 +471,31 @@ function handleAdminRoute(req, res, ctx) {
       return json(res, 200, { ok: true });
     }
 
+    // ── Slot/RTP Konfigurasyonu ──
+
+    const slotConfig = require('../server/games/slot-config');
+
+    if (req.method === 'GET' && pathname === '/admin/api/slot-config') {
+      return json(res, 200, { ok: true, config: slotConfig.get() });
+    }
+
+    if (req.method === 'PUT' && pathname === '/admin/api/slot-config') {
+      const body = await readJsonBody(req);
+      const partial = body.config;
+      if (!partial || typeof partial !== 'object') {
+        return json(res, 400, { ok: false, error: 'config alani gerekli' });
+      }
+      slotConfig.update(partial);
+      if (typeof ctx.onConfigSaved === 'function') ctx.onConfigSaved();
+      return json(res, 200, { ok: true, config: slotConfig.get() });
+    }
+
+    if (req.method === 'POST' && pathname === '/admin/api/slot-config/reset') {
+      slotConfig.reset();
+      if (typeof ctx.onConfigSaved === 'function') ctx.onConfigSaved();
+      return json(res, 200, { ok: true, config: slotConfig.get() });
+    }
+
     // ── Durum ──
 
     if (req.method === 'GET' && pathname === '/admin/api/status') {
