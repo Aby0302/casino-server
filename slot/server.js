@@ -50,6 +50,7 @@ const MIME = {
   '.woff2': 'font/woff2',
   '.ttf': 'font/ttf',
   '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
   '.wav': 'audio/wav',
 };
 

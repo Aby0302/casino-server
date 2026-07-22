@@ -20,7 +20,7 @@ window/stretch/mode="canvas_items"
 
 [godot_cef]
 
-advanced/custom_command_line_switches="ozone-platform=x11"
+advanced/custom_command_line_switches="ozone-platform=x11\nautoplay-policy=no-user-gesture-required"
 
 [rendering]
 

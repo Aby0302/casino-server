@@ -51,14 +51,14 @@ export class Preload extends Phaser.Scene {
     this.load.svg('icon_info', 'icons/info.svg', { width: 32, height: 32 });
     this.load.svg('icon_fullscreen', 'icons/fullscreen.svg', { width: 32, height: 32 });
 
-    // Audio (including previously unused lose.mp3)
-    this.load.audio('backgroundDefault', 'audio/background-default.mp3');
-    this.load.audio('reels', 'audio/reels.mp3');
-    this.load.audio('reelStop', 'audio/reel_stop.mp3');
-    this.load.audio('win', 'audio/win.mp3');
-    this.load.audio('lose', 'audio/lose.mp3');
-    this.load.audio('button', 'audio/button.mp3');
-    this.load.audio('musicDefault', 'audio/music_default.mp3');
+    // OGG is required by the Godot CEF build; MP3 is kept as browser fallback.
+    this.load.audio('backgroundDefault', ['audio/background-default.ogg', 'audio/background-default.mp3']);
+    this.load.audio('reels', ['audio/reels.ogg', 'audio/reels.mp3']);
+    this.load.audio('reelStop', ['audio/reel_stop.ogg', 'audio/reel_stop.mp3']);
+    this.load.audio('win', ['audio/win.ogg', 'audio/win.mp3']);
+    this.load.audio('lose', ['audio/lose.ogg', 'audio/lose.mp3']);
+    this.load.audio('button', ['audio/button.ogg', 'audio/button.mp3']);
+    this.load.audio('musicDefault', ['audio/music_default.ogg', 'audio/music_default.mp3']);
     this.load.audio('musicFreeSpins', 'audio/music_freespins.wav');
   }
 
