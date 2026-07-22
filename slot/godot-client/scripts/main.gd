@@ -800,6 +800,7 @@ func _load_map_from_path(config: Dictionary, local_path: String) -> void:
             return
 
     _apply_map_transform(map_node, config)
+    _apply_model_parts(map_node, config.get("mapParts", {}))
     map_node.name = "CasinoLobby"
     world_root.add_child(map_node)
 
@@ -892,6 +893,7 @@ func _load_machine_from_path(machine: Dictionary, local_path: String) -> void:
     machine_node.position = _to_vector3(machine.get("position", []), Vector3.ZERO)
     machine_node.rotation_degrees = _to_vector3(machine.get("rotation", []), Vector3.ZERO)
     machine_node.scale = _to_vector3(machine.get("scale", []), Vector3.ONE)
+    _apply_model_parts(machine_node, machine.get("modelParts", {}))
     machine_root.add_child(machine_node)
 
     var added_machine_colliders := 0
@@ -937,6 +939,30 @@ func _load_gltf(path: String) -> Node:
         push_error("GLB load failed for %s: %s" % [path, error_string(err)])
         return null
     return document.generate_scene(state)
+
+
+func _apply_model_parts(root: Node, parts_value: Variant) -> void:
+    if typeof(parts_value) != TYPE_DICTIONARY:
+        return
+
+    _apply_model_parts_recursive(root, parts_value as Dictionary)
+
+
+func _apply_model_parts_recursive(node: Node, parts: Dictionary) -> void:
+    if node is Node3D:
+        var part_value: Variant = parts.get(node.name)
+        if typeof(part_value) == TYPE_DICTIONARY:
+            var part: Dictionary = part_value
+            var node_3d := node as Node3D
+            if part.has("position"):
+                node_3d.position = _to_vector3(part.get("position", []), node_3d.position)
+            if part.has("rotation"):
+                node_3d.rotation_degrees = _to_vector3(part.get("rotation", []), node_3d.rotation_degrees)
+            if part.has("scale"):
+                node_3d.scale = _to_vector3(part.get("scale", []), node_3d.scale)
+
+    for child in node.get_children():
+        _apply_model_parts_recursive(child, parts)
 
 
 func _add_static_colliders(root: Node) -> int:
