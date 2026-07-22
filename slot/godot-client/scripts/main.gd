@@ -987,12 +987,19 @@ func _apply_model_parts(root: Node, parts_value: Variant) -> void:
     if typeof(parts_value) != TYPE_DICTIONARY:
         return
 
-    _apply_model_parts_recursive(root, parts_value as Dictionary)
+    _apply_model_parts_recursive(root, parts_value as Dictionary, {"mesh_index": 0})
 
 
-func _apply_model_parts_recursive(node: Node, parts: Dictionary) -> void:
+func _apply_model_parts_recursive(node: Node, parts: Dictionary, state: Dictionary) -> void:
     if node is Node3D:
         var part_value: Variant = parts.get(node.name)
+        if node is MeshInstance3D:
+            var mesh_index := int(state.get("mesh_index", 0))
+            var part_key := "%03d__%s" % [mesh_index, node.name]
+            state["mesh_index"] = mesh_index + 1
+            var indexed_part_value: Variant = parts.get(part_key)
+            if typeof(indexed_part_value) == TYPE_DICTIONARY:
+                part_value = indexed_part_value
         if typeof(part_value) == TYPE_DICTIONARY:
             var part: Dictionary = part_value
             var node_3d := node as Node3D
@@ -1002,16 +1009,21 @@ func _apply_model_parts_recursive(node: Node, parts: Dictionary) -> void:
                 node_3d.rotation_degrees = _to_vector3(part.get("rotation", []), node_3d.rotation_degrees)
             if part.has("scale"):
                 node_3d.scale = _to_vector3(part.get("scale", []), node_3d.scale)
-            if part.has("hidden"):
+            if bool(part.get("deleted", false)):
+                node_3d.visible = false
+            elif part.has("hidden"):
                 node_3d.visible = not bool(part.get("hidden"))
             elif part.has("visible"):
                 node_3d.visible = bool(part.get("visible"))
 
     for child in node.get_children():
-        _apply_model_parts_recursive(child, parts)
+        _apply_model_parts_recursive(child, parts, state)
 
 
 func _add_static_colliders(root: Node) -> int:
+    if root is Node3D and not (root as Node3D).visible:
+        return 0
+
     var added := 0
     if root is MeshInstance3D:
         var mesh_instance := root as MeshInstance3D

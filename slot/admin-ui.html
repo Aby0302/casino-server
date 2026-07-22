@@ -659,7 +659,8 @@ function applyObjectParts(model, parts) {
     if (child.isMesh) {
       const name = meshDisplayName(child, meshIndex);
       const part = safeParts[modelMeshPartKey(name, meshIndex)] || safeParts[name];
-      child.visible = !(part && (part.hidden === true || part.visible === false));
+      child.userData.modelEditorDeleted = Boolean(part && part.deleted === true);
+      child.visible = !(part && (part.deleted === true || part.hidden === true || part.visible === false));
       if (part) {
         if (part.position) child.position.set(part.position[0], part.position[1], part.position[2]);
         if (part.rotation) child.rotation.set(degToRad(part.rotation[0]), degToRad(part.rotation[1]), degToRad(part.rotation[2]));
@@ -746,7 +747,8 @@ function saveModelParts() {
         scale: [Number(s.x.toFixed(4)), Number(s.y.toFixed(4)), Number(s.z.toFixed(4))],
       });
     }
-    if (mesh.visible === false) part.hidden = true;
+    if (mesh.userData && mesh.userData.modelEditorDeleted === true) part.deleted = true;
+    else if (mesh.visible === false) part.hidden = true;
     if (Object.keys(part).length) parts[partKey || name] = part;
   });
   if (Object.keys(parts).length) owner[partsKey] = parts;
@@ -818,14 +820,23 @@ function getModelPartConfig(targetOrKey, create = false) {
   return info.owner[info.partsKey][partKey];
 }
 
+function isTargetDeleted(targetOrKey) {
+  const target = typeof targetOrKey === 'string' ? getConfigTarget(targetOrKey) : targetOrKey;
+  if (!target || target.kind !== 'modelMesh') return false;
+  if (target.object && target.object.userData && target.object.userData.modelEditorDeleted === true) return true;
+  const part = getModelPartConfig(target, false);
+  return Boolean(part && part.deleted === true);
+}
+
 function isTargetVisibilityToggleable(targetOrKey) {
   const target = typeof targetOrKey === 'string' ? getConfigTarget(targetOrKey) : targetOrKey;
-  return Boolean(target && target.kind === 'modelMesh');
+  return Boolean(target && target.kind === 'modelMesh' && !isTargetDeleted(target));
 }
 
 function isTargetHidden(targetOrKey) {
   const target = typeof targetOrKey === 'string' ? getConfigTarget(targetOrKey) : targetOrKey;
   if (!target || target.kind !== 'modelMesh') return false;
+  if (isTargetDeleted(target)) return true;
   if (target.object && target.object.visible === false) return true;
   const part = getModelPartConfig(target, false);
   return Boolean(part && (part.hidden === true || part.visible === false));
@@ -850,7 +861,8 @@ function toggleTargetVisibility(key) {
 function refreshModelEditToolbar() {
   const toggleBtn = $('#map3dToggleVisible');
   const showAllBtn = $('#map3dShowAll');
-  if (!toggleBtn || !showAllBtn) return;
+  const deleteBtn = $('#map3dDelete');
+  if (!toggleBtn || !showAllBtn || !deleteBtn) return;
   const target = getConfigTarget(selectedObjectKey);
   const canToggle = modelEditMode && isTargetVisibilityToggleable(target);
   const hidden = canToggle && isTargetHidden(target);
@@ -858,12 +870,16 @@ function refreshModelEditToolbar() {
   toggleBtn.textContent = hidden ? 'Seçileni Göster' : 'Seçileni Gizle';
   toggleBtn.classList.toggle('danger', !hidden);
   showAllBtn.style.display = modelEditMode ? '' : 'none';
+  deleteBtn.textContent = modelEditMode && target && target.kind === 'modelMesh' ? 'Parçayı Sil' : 'Sil';
 }
 
 function showAllModelParts() {
   if (!modelEditMode || !modelEditSubMeshes.length) return;
+  let restored = 0;
   modelEditSubMeshes.forEach(({ mesh }) => {
-    if (mesh) mesh.visible = true;
+    if (!mesh || mesh.userData.modelEditorDeleted === true) return;
+    if (mesh.visible === false) restored++;
+    mesh.visible = true;
   });
   saveModelParts();
   syncRaw();
@@ -871,7 +887,7 @@ function showAllModelParts() {
   update3DInspector();
   update3DSelection();
   refreshModelEditToolbar();
-  toast('Tüm model parçaları gösterildi');
+  toast(restored ? 'Gizli model parçaları gösterildi' : 'Gösterilecek gizli model parçası yok');
 }
 
 function toggleTargetLock(key) {
@@ -1145,6 +1161,7 @@ function refreshHierarchy() {
   ];
   if (modelEditMode && modelEditTargetKey === MAP_KEY) {
     modelEditSubMeshes.forEach(({ name, key, partKey }) => {
+      if (isTargetDeleted(key)) return;
       rows.push(button(key, '◈ ' + name, `harita.mesh · ${partKey}`, true));
     });
   }
@@ -1153,6 +1170,7 @@ function refreshHierarchy() {
     Object.keys(EDIT_PARTS).forEach(part => rows.push(button(machinePartKey(idx, part), EDIT_PARTS[part].label, `${m.id || ('Makine ' + (idx + 1))}.${part}`, true)));
     if (modelEditMode && modelEditTargetKey === machineKey(idx)) {
       modelEditSubMeshes.forEach(({ name, key, partKey }) => {
+        if (isTargetDeleted(key)) return;
         rows.push(button(key, '◈ ' + name, `${m.id || 'Makine'}.mesh · ${partKey}`, true));
       });
     }
@@ -1939,9 +1957,37 @@ function duplicateSelectedMachine() {
   toast('Makine çoğaltıldı');
 }
 
+function deleteSelectedModelMesh(target = getConfigTarget(selectedObjectKey)) {
+  if (!modelEditMode || !target || target.kind !== 'modelMesh') return false;
+  const label = target.label || 'mesh';
+  if (!confirm(label + ' model parçası silinsin mi?')) return true;
+  const part = getModelPartConfig(target, true);
+  if (part) {
+    part.deleted = true;
+    delete part.hidden;
+    delete part.visible;
+  }
+  if (target.object) {
+    target.object.visible = false;
+    target.object.userData.modelEditorDeleted = true;
+  }
+  if (map3d.transformControls) map3d.transformControls.detach();
+  saveModelParts();
+  syncRaw();
+
+  const currentIndex = modelEditSubMeshes.findIndex(entry => entry.key === target.key);
+  const next = modelEditSubMeshes.find((entry, idx) => idx > currentIndex && !isTargetDeleted(entry.key))
+    || modelEditSubMeshes.find((entry, idx) => idx < currentIndex && !isTargetDeleted(entry.key));
+  if (next) setSelectedObject(next.key);
+  else exitModelEditMode();
+  toast('Model parçası silindi: ' + label);
+  return true;
+}
+
 function deleteSelectedMachine() {
   const target = getConfigTarget(selectedObjectKey);
-  if (!target || target.kind !== 'machine') { toast('Silmek için makine gövdesini seçin', true); return; }
+  if (target && target.kind === 'modelMesh') { deleteSelectedModelMesh(target); return; }
+  if (!target || target.kind !== 'machine') { toast('Silmek için makine gövdesi veya model parçası seçin', true); return; }
   if (isTargetLocked(target)) { toast('Makine kilitli; önce kilidi açın', true); return; }
   selectedMachineIndex = target.machineIndex;
   if (!config || selectedMachineIndex < 0 || !config.machines[selectedMachineIndex]) return;
@@ -1970,8 +2016,8 @@ function handle3DShortcuts(e) {
   if (e.key === 'e' || e.key === 'E') { setTransformMode('rotate'); e.preventDefault(); }
   if (e.key === 'r' || e.key === 'R') { setTransformMode('scale'); e.preventDefault(); }
   if (e.key === 'f' || e.key === 'F') { focusSelectedObject(); e.preventDefault(); }
+  if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelectedMachine(); e.preventDefault(); }
   if (!modelEditMode) {
-    if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelectedMachine(); e.preventDefault(); }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) { duplicateSelectedMachine(); e.preventDefault(); }
   }
 }
