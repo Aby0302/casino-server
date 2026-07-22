@@ -60,5 +60,4 @@ class GameStateOverride(GeneralGameState):
         capped_count = min(scatter_count, max(fs_map.keys()) if fs_map else 7)
         extra = fs_map.get(capped_count, 0)
         self.tot_fs += extra
-        fs_trigger_event(self, basegame_trigger=False, freegame_trigger=True)
-
+        fs_trigger_event(self, basegame_trigger=False, freegame_trigger=True, awarded_spins=extra)

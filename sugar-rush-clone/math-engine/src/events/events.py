@@ -133,14 +133,17 @@ def wincap_event(gamestate) -> None:
     gamestate.add_event(event)
 
 
-def fs_trigger_event(gamestate, basegame_trigger=False, freegame_trigger=False) -> None:
+def fs_trigger_event(gamestate, basegame_trigger=False, freegame_trigger=False, awarded_spins=None) -> None:
     """
     Emitted when free spins are triggered from the base game or retrigger.
     Exactly one of basegame_trigger or freegame_trigger must be True.
     """
     assert basegame_trigger != freegame_trigger, \
         "Exactly one of basegame_trigger or freegame_trigger must be True"
-    assert gamestate.tot_fs > 0, "tot_fs must be > 0 when triggering free spins"
+    total_spins = gamestate.tot_fs if basegame_trigger else awarded_spins
+    if total_spins is None:
+        total_spins = gamestate.tot_fs
+    assert total_spins > 0, "totalSpins must be > 0 when triggering free spins"
 
     scatter_count = 0
     for r in range(len(gamestate.board)):
@@ -152,7 +155,7 @@ def fs_trigger_event(gamestate, basegame_trigger=False, freegame_trigger=False) 
 
     event = {
         "type": "fsTrigger",
-        "totalSpins": gamestate.tot_fs,
+        "totalSpins": total_spins,
         "scatterCount": scatter_count,
         "triggerType": "basegame" if basegame_trigger else "retrigger",
     }

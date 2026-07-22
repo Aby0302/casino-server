@@ -612,6 +612,18 @@ function handlePublicApiRoute(url, req, res) {
 
 const walletSessions = new Map(); // sessionID -> { balance, round, event }
 let sugarBooks = null;
+const MAX_SINGLE_SUGAR_FS_AWARD = 34;
+
+function isUsableSugarBook(book) {
+  // Older book exports wrote cumulative free-spin totals into retrigger events.
+  // A single Sugar Rush trigger cannot award more than the super-mode 7-scatter cap.
+  if (!Array.isArray(book && book.events)) return false;
+  return !book.events.some(event => {
+    if (!event || event.type !== 'fsTrigger') return false;
+    const totalSpins = Number(event.totalSpins);
+    return !Number.isFinite(totalSpins) || totalSpins <= 0 || totalSpins > MAX_SINGLE_SUGAR_FS_AWARD;
+  });
+}
 
 function getWalletSession(sessionID = DEFAULT_SESSION_ID) {
   if (!walletSessions.has(sessionID)) {
@@ -651,8 +663,10 @@ function loadSugarBooks() {
 
   try {
     const lines = fs.readFileSync(SUGAR_BOOKS_FILE, 'utf8').split('\n').filter(Boolean);
-    sugarBooks = lines.map(line => JSON.parse(line));
-    console.log(`Loaded ${sugarBooks.length} Sugar Rush server-side books`);
+    const loadedBooks = lines.map(line => JSON.parse(line));
+    sugarBooks = loadedBooks.filter(isUsableSugarBook);
+    const rejected = loadedBooks.length - sugarBooks.length;
+    console.log(`Loaded ${sugarBooks.length} Sugar Rush server-side books${rejected ? ` (${rejected} malformed free-spin books skipped)` : ''}`);
   } catch (err) {
     console.warn(`Could not load Sugar Rush books (${err.message}); using fallback generator`);
     sugarBooks = [];
