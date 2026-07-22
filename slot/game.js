@@ -37,6 +37,19 @@
   var SESSION_ID = query.get('sessionID') || query.get('session_id') || 'unity-player'
   var INTERNAL_TOKEN = query.get('cloud_internal') || ''
   var SERVER = window.__SERVER_URL || ((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host)
+  var SYM_DEFS = {
+    heart: { text: '♥', color: '#e51e57' },
+    diamond: { text: '♦', color: '#b235e6' },
+    banana: { text: '🍌', color: '#d9bf29' },
+    apple: { text: '🍎', color: '#e62f35' },
+    orange: { text: '🍊', color: '#e98305' },
+    watermelon: { text: '🍉', color: '#39ad48' },
+    plum: { text: '🟣', color: '#7d21c9' },
+    grape: { text: '🍇', color: '#5b2e96' },
+    scatter: { text: '★', color: '#d8a719' }
+  }
+  var SYM_IDS = Object.keys(SYM_DEFS)
+  var spinAnimation = null
 
   function initAudio() {
     if (!audioCtx) {
@@ -86,6 +99,43 @@
     return Math.floor(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
   }
 
+  function displaySymbol(id) {
+    var def = SYM_DEFS[id] || SYM_DEFS.heart
+    return { id: id || 'heart', text: def.text, color: def.color }
+  }
+
+  function randomDisplaySymbol() {
+    return displaySymbol(SYM_IDS[Math.floor(Math.random() * SYM_IDS.length)])
+  }
+
+  function randomColumn() {
+    return Array.from({ length: ROWS }, randomDisplaySymbol)
+  }
+
+  function randomGrid() {
+    return Array.from({ length: COLS }, randomColumn)
+  }
+
+  function mapServerGrid(grid) {
+    return (grid || []).map(function (col) {
+      return (col || []).map(function (s) {
+        return s ? displaySymbol(s.id) : null
+      })
+    })
+  }
+
+  function ensureGridCells() {
+    var total = COLS * ROWS
+    while (els.grid.children.length < total) {
+      var cell = document.createElement('div')
+      cell.className = 'cell'
+      els.grid.appendChild(cell)
+    }
+    while (els.grid.children.length > total) {
+      els.grid.removeChild(els.grid.lastChild)
+    }
+  }
+
   function render(winningPositions) {
     var winKey = {}
     if (winningPositions) {
@@ -93,22 +143,24 @@
         winKey[winningPositions[i][0] + '-' + winningPositions[i][1]] = true
       }
     }
-    els.grid.innerHTML = ''
+    ensureGridCells()
     for (var r = 0; r < ROWS; r++) {
       for (var c = 0; c < COLS; c++) {
-        var cell = document.createElement('div')
-        cell.className = 'cell'
+        var cell = els.grid.children[r * COLS + c]
         var sym = state.grid[c] && state.grid[c][r]
         if (sym) {
-          var div = document.createElement('div')
-          div.className = 'sym'
-          if (winKey[c + '-' + r]) div.className += ' win'
+          var div = cell.firstElementChild
+          if (!div) {
+            div = document.createElement('div')
+            cell.appendChild(div)
+          }
+          div.className = 'sym' + (winKey[c + '-' + r] ? ' win' : '')
           div.style.background = sym.color
           div.textContent = sym.text
           div.style.animationDelay = (r * 62 + c * 10) + 'ms'
-          cell.appendChild(div)
+        } else {
+          cell.textContent = ''
         }
-        els.grid.appendChild(cell)
       }
     }
   }
@@ -131,6 +183,60 @@
 
   function setAllRolling(rolling) {
     for (var c = 0; c < COLS; c++) setColumnRolling(c, rolling)
+  }
+
+  function setRollingColumns(stopped) {
+    for (var c = 0; c < COLS; c++) setColumnRolling(c, !stopped[c])
+  }
+
+  function stopSpinAnimation() {
+    if (spinAnimation && spinAnimation.timer) clearInterval(spinAnimation.timer)
+    spinAnimation = null
+    setAllRolling(false)
+  }
+
+  function startSpinAnimation() {
+    stopSpinAnimation()
+    var stopped = Array(COLS).fill(false)
+    state.grid = randomGrid()
+    render()
+    setAllRolling(true)
+    spinAnimation = {
+      stopped: stopped,
+      timer: setInterval(function () {
+        for (var c = 0; c < COLS; c++) {
+          if (!stopped[c]) state.grid[c] = randomColumn()
+        }
+        render()
+        setRollingColumns(stopped)
+      }, 120)
+    }
+  }
+
+  function settleSpinAnimation(finalGrid, data) {
+    if (!spinAnimation) startSpinAnimation()
+    var anim = spinAnimation
+    var col = 0
+    function stopNextColumn() {
+      if (col >= COLS) {
+        if (anim.timer) clearInterval(anim.timer)
+        spinAnimation = null
+        state.grid = finalGrid
+        render()
+        setAllRolling(false)
+        setTimeout(function () { playTumbles(1, data) }, 420)
+        return
+      }
+      anim.stopped[col] = true
+      state.grid[col] = finalGrid[col] || randomColumn()
+      render()
+      setRollingColumns(anim.stopped)
+      setColumnRolling(col, false)
+      playStopSound()
+      col++
+      setTimeout(stopNextColumn, 330 + col * 55)
+    }
+    setTimeout(stopNextColumn, 650)
   }
 
   function burst(positions) {
@@ -179,6 +285,7 @@
     els.msg.textContent = ''
     syncUI()
     playSpinSound()
+    startSpinAnimation()
     ws.send(JSON.stringify({ type: 'spin', bet: state.bet }))
   }
 
@@ -187,56 +294,13 @@
     state.totalWin = 0
     unityReport('bet', { amount: data.bet, balance: data.balance })
 
-    // Build symbol map from server data
-    var symDefs = {
-      heart: { text: '♥', color: '#e51e57' },
-      diamond: { text: '♦', color: '#b235e6' },
-      banana: { text: '🍌', color: '#d9bf29' },
-      apple: { text: '🍎', color: '#e62f35' },
-      orange: { text: '🍊', color: '#e98305' },
-      watermelon: { text: '🍉', color: '#39ad48' },
-      plum: { text: '🟣', color: '#7d21c9' },
-      grape: { text: '🍇', color: '#5b2e96' },
-      scatter: { text: '★', color: '#d8a719' }
-    }
-
-    var spinEvent = data.events[0]
+    var spinEvent = data.events && data.events[0]
+    var finalGrid = null
     if (spinEvent && spinEvent.type === 'spin') {
-      state.grid = spinEvent.grid.map(function (col) {
-        return col.map(function (s) {
-          if (!s) return null
-          var def = symDefs[s.id] || {}
-          return { id: s.id, text: def.text, color: def.color }
-        })
-      })
+      finalGrid = mapServerGrid(spinEvent.grid)
     }
 
-    render()
-    setAllRolling(true)
-
-    var ticks = 0
-    var interval = setInterval(function () {
-      ticks++
-      render()
-      setAllRolling(true)
-      if (ticks > 9) {
-        clearInterval(interval)
-        stopColumns(0, data)
-      }
-    }, 210)
-  }
-
-  function stopColumns(col, data) {
-    if (col >= COLS) {
-      setAllRolling(false)
-      setTimeout(function () { playTumbles(1, data) }, 420)
-      return
-    }
-    render()
-    for (var c = col + 1; c < COLS; c++) setColumnRolling(c, true)
-    setColumnRolling(col, false)
-    playStopSound()
-    setTimeout(function () { stopColumns(col + 1, data) }, 360 + col * 55)
+    settleSpinAnimation(finalGrid || randomGrid(), data)
   }
 
   function playTumbles(idx, data) {
@@ -263,13 +327,7 @@
         // After explosion, show dropped grid
         for (var i = idx + 1; i < data.events.length; i++) {
           if (data.events[i].type === 'drop') {
-            state.grid = data.events[i].grid.map(function (col) {
-              return col.map(function (s) {
-                if (!s) return null
-                var def = s.id ? { heart: { text: '♥', color: '#e51e57' }, diamond: { text: '♦', color: '#b235e6' }, banana: { text: '🍌', color: '#d9bf29' }, apple: { text: '🍎', color: '#e62f35' }, orange: { text: '🍊', color: '#e98305' }, watermelon: { text: '🍉', color: '#39ad48' }, plum: { text: '🟣', color: '#7d21c9' }, grape: { text: '🍇', color: '#5b2e96' }, scatter: { text: '★', color: '#d8a719' } }[s.id] : {}
-                return { id: s.id, text: def.text, color: def.color }
-              })
-            })
+            state.grid = mapServerGrid(data.events[i].grid)
             break
           }
         }
@@ -322,6 +380,7 @@
           case 'error':
             console.error('Server:', msg.message)
             state.spinning = false
+            stopSpinAnimation()
             syncUI()
             break
         }
@@ -329,6 +388,12 @@
     }
     ws.onclose = function () {
       console.log('Disconnected, retrying in 3s...')
+      if (state.spinning) {
+        state.spinning = false
+        stopSpinAnimation()
+        els.msg.textContent = 'Bağlantı koptu, tekrar bağlanıyor...'
+        syncUI()
+      }
       setTimeout(connectWS, 3000)
     }
     ws.onerror = function () {}

@@ -42,7 +42,7 @@
         .spin .sym { animation: reel-drop .58s cubic-bezier(.18,.8,.28,1.05) both; }
         .rolling .sym { animation: roll-down .42s ease-in-out infinite; }
         .rolling.up .sym { animation-name: roll-up; }
-        .win .sym { animation: pop .55s ease infinite alternate; box-shadow: 0 0 18px #ffd700; }
+        .sym.win { animation: pop .55s ease infinite alternate; box-shadow: 0 0 18px #ffd700; }
         @keyframes roll-down {
             0% { transform: translateY(-65%) scale(.96); opacity: .55; }
             45% { transform: translateY(0) scale(1); opacity: 1; }
@@ -101,6 +101,6 @@
             </section>
         </main>
     </div>
-    <script src="game.js?v=20260714-domslot5"></script>
+    <script src="game.js?v=20260722-fullspin"></script>
 </body>
 </html>
