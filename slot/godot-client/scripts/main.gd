@@ -199,8 +199,10 @@ func _physics_process(delta: float) -> void:
 
     var direction := _movement_direction()
     var velocity := player_body.velocity
-    if not player_body.is_on_floor():
+    if _is_airborne():
         velocity.y -= gravity * delta
+    else:
+        velocity.y = 0.0
     velocity.x = direction.x * move_speed
     velocity.z = direction.z * move_speed
     player_body.velocity = velocity
@@ -209,6 +211,19 @@ func _physics_process(delta: float) -> void:
     _check_teleports()
 
     _update_interaction_prompt()
+
+
+func _is_airborne() -> bool:
+    if not world_colliders_ready:
+        return false
+    var eye := _current_eye_position()
+    var probe := player_height * 0.5
+    var from := eye + Vector3(0.0, 10.0, 0.0)
+    var to := eye - Vector3(0.0, probe, 0.0)
+    var space_state := get_world_3d().direct_space_state
+    var query := PhysicsRayQueryParameters3D.create(from, to, 1)
+    query.exclude = [player_body.get_rid()]
+    return space_state.intersect_ray(query).is_empty()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1156,9 +1171,10 @@ func _keep_player_on_floor() -> void:
         var hit_position: Vector3 = floor_hit["position"]
         var snapped_y := hit_position.y + floor_snap_offset
         var delta_y := snapped_y - player_body.global_position.y
-        var small_step_down := player_height * 0.3
-        if delta_y >= 0.0 or abs(delta_y) <= small_step_down:
+        var max_snap := player_height * 0.6
+        if abs(delta_y) <= max_snap:
             player_body.global_position.y = snapped_y
+            player_body.velocity.y = 0.0
             if delta_y > fall_recovery_distance:
                 set_status("Player snapped back onto the lobby floor")
             _remember_safe_position(player_body.global_position)
