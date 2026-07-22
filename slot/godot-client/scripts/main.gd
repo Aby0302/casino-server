@@ -194,7 +194,7 @@ func _poll_balance_socket() -> void:
 
 
 func _physics_process(delta: float) -> void:
-    if player_body == null:
+    if player_body == null or _screen_state != "game":
         return
 
     var direction := _movement_direction()
@@ -1623,6 +1623,8 @@ func _set_control_full_rect(control: Control) -> void:
 
 
 func _update_interaction_prompt() -> void:
+    if prompt_label == null:
+        return
     var nearest_index := -1
     var nearest_distance := INF
     var player_xz := Vector2(player_body.global_position.x, player_body.global_position.z)
