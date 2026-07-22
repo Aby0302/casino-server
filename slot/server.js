@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
-const rng = require('../server/rng');
+const rng = (() => { try { return require('../server/rng'); } catch (e) { return require('./rng'); } })();
 const { handleCloudStreamRoute, isInternalGameRequest, listCloudSessions } = require('./cloud-stream');
 const { handleAdminRoute, persistBalance, getRegisteredPlayer, registerPublicPlayer, getConfigFilePath, resolveAssetFile } = require('./admin');
 

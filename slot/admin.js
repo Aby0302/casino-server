@@ -473,7 +473,7 @@ function handleAdminRoute(req, res, ctx) {
 
     // ── Slot/RTP Konfigurasyonu ──
 
-    const slotConfig = require('../server/games/slot-config');
+    const slotConfig = (() => { try { return require('../server/games/slot-config'); } catch (e) { return require('./slot-config'); } })();
 
     if (req.method === 'GET' && pathname === '/admin/api/slot-config') {
       return json(res, 200, { ok: true, config: slotConfig.get() });

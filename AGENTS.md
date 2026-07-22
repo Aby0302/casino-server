@@ -29,6 +29,7 @@ All game logic (poker tables, blackjack, slot math) lives in `server/games/`.
 ## Monorepo Boundaries
 
 - **`slot/`** — Active dev area. Server, admin, map editor, cloud streaming, Phaser slot game, Godot client.
+  - Includes vendored copies of `rng.js` and `slot-config.js` from `server/` (fallback for production Docker image).
 - **`server/`** — Game logic server. Not started independently in dev (root Dockerfile handles it).
 - **`sugar-rush-clone/`** — Vendored clone repo (math engine + frontend). Frontend built to `frontend/dist/` in Docker.
 - **`slot/godot-client/`** — Godot 4 project. Not part of Node runtime. Open `project.godot` in Godot 4.x.
