@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { URL } = require('url');
+const { pipeline } = require('stream/promises');
 
 const DATA_DIR = path.join(__dirname, 'data');
 const PLAYERS_FILE = path.join(DATA_DIR, 'players.json');
@@ -10,8 +11,6 @@ const DEFAULT_CONFIG_FILE = path.join(__dirname, 'casino-config.json');
 const CONFIG_FILE = path.join(DATA_DIR, 'casino-config.json');
 const GODOT_EDITOR_DIR = path.join(__dirname, 'godot-web-editor', 'latest');
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
-const DEFAULT_MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
-const MAX_UPLOAD_BYTES = Math.max(1, Number(process.env.ADMIN_MAX_UPLOAD_BYTES) || DEFAULT_MAX_UPLOAD_BYTES);
 const DEFAULT_PLAYER_BALANCE = 10000;
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || (() => {
@@ -353,14 +352,6 @@ function sanitizeFileName(value) {
   return name;
 }
 
-function formatBytes(bytes) {
-  const value = Number(bytes) || 0;
-  if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${value} B`;
-}
-
 function resolveRoot(dirParam) {
   return ensureFileRoot(dirParam);
 }
@@ -499,44 +490,20 @@ function handleAdminRoute(req, res, ctx) {
       const root = resolveRoot(requestUrl.searchParams.get('dir'));
       const name = sanitizeFileName(requestUrl.searchParams.get('name'));
       if (!root || !name) return json(res, 400, { ok: false, error: 'Gecersiz klasor veya dosya adi' });
-      const contentLength = Number(req.headers['content-length'] || 0);
-      if (Number.isFinite(contentLength) && contentLength > MAX_UPLOAD_BYTES) {
-        req.resume();
-        return json(res, 413, { ok: false, error: `Dosya cok buyuk. Maksimum ${formatBytes(MAX_UPLOAD_BYTES)}.` });
-      }
       fs.mkdirSync(root, { recursive: true });
 
       const target = path.join(root, name);
       const tmp = `${target}.uploading-${crypto.randomBytes(4).toString('hex')}`;
-      const stream = fs.createWriteStream(tmp);
       let received = 0;
-      let tooLarge = false;
 
-      await new Promise((resolve, reject) => {
-        req.on('data', chunk => {
-          received += chunk.length;
-          if (tooLarge) return;
-          if (received > MAX_UPLOAD_BYTES) {
-            tooLarge = true;
-            stream.destroy();
-            fs.unlink(tmp, () => {});
-            return;
-          }
-          if (!stream.write(chunk)) {
-            req.pause();
-            stream.once('drain', () => req.resume());
-          }
-        });
-        req.on('end', () => {
-          if (tooLarge) return resolve();
-          stream.end(resolve);
-        });
-        req.on('error', reject);
-        stream.on('error', err => { if (!tooLarge) reject(err); });
-      });
-
-      if (tooLarge) return json(res, 413, { ok: false, error: `Dosya cok buyuk. Maksimum ${formatBytes(MAX_UPLOAD_BYTES)}.` });
-      fs.renameSync(tmp, target);
+      try {
+        req.on('data', chunk => { received += chunk.length; });
+        await pipeline(req, fs.createWriteStream(tmp));
+        fs.renameSync(tmp, target);
+      } catch (err) {
+        fs.unlink(tmp, () => {});
+        throw err;
+      }
       return json(res, 200, { ok: true, name, size: received });
     }
 

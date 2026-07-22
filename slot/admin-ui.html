@@ -496,7 +496,6 @@ $('#uploadBtn').onclick = () => {
   const xhr = new XMLHttpRequest();
   const prog = $('#uploadProg');
   xhr.withCredentials = true;
-  xhr.timeout = 30 * 60 * 1000;
   prog.style.display = ''; prog.value = 0;
   xhr.upload.onprogress = e => { if (e.lengthComputable) prog.value = (e.loaded / e.total) * 100; };
   xhr.onload = () => {
