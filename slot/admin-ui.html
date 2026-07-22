@@ -206,7 +206,7 @@
                 <div id="map3dCanvasHost"></div>
                 <div id="map3dStatus">3D editör yükleniyor...</div>
               </div>
-              <div class="map3d-help">Unity kısayolları: W taşı, E döndür, R ölçek, F odak, Delete sil, Ctrl+D çoğalt. Hierarchy'den harita, makine, spawn veya alt nesne seçip gizmo eksenlerinden düzenle.</div>
+              <div class="map3d-help">Unity kısayolları: W taşı, E döndür, R ölçek, F odak, ok tuşları seçileni taşı, Shift hızlı, Alt hassas, Delete sil, Ctrl+D çoğalt. Hierarchy'den harita, makine, spawn veya alt nesne seçip gizmo eksenlerinden düzenle.</div>
             </div>
             <aside class="unity-panel">
               <h3>Inspector</h3>
@@ -304,6 +304,7 @@ const map3d = {
   TransformControls: null,
   scene: null, camera: null, renderer: null, controls: null, loader: null,
   transformControls: null, transformMode: 'translate', suppressTransformSync: false,
+  transformDragging: false,
   raycaster: null, pointer: null, dragPlane: null, dragOffset: null,
   machineGroups: [], mapObject: null, spawnGroup: null, editRoot: null, grid: null,
   selectionBox: null, selectionBoxBounds: null,
@@ -1482,6 +1483,7 @@ async function boot3DEditor() {
   map3d.transformControls = new TransformControls(map3d.camera, map3d.renderer.domElement);
   map3d.transformControls.setMode(map3d.transformMode);
   map3d.transformControls.addEventListener('dragging-changed', event => {
+    map3d.transformDragging = Boolean(event.value);
     map3d.controls.enabled = !event.value;
     if (!event.value) renderConfig({ rebuild3d: false });
   });
@@ -2082,10 +2084,49 @@ function uniqueMachineId(base) {
   return stem + i;
 }
 
+function keyboardNudgeStep(e) {
+  const snapEnabled = $('#map3dSnap') ? $('#map3dSnap').checked : true;
+  const rawSnap = Number($('#map3dSnapValue') ? $('#map3dSnapValue').value : 10) || 10;
+  let step = snapEnabled ? Math.max(0.001, rawSnap) : 10;
+  if (e.shiftKey) step *= 10;
+  if (e.altKey) step /= 10;
+  return step;
+}
+
+function nudgeSelectedObject(axisIndex, delta) {
+  const target = getConfigTarget(selectedObjectKey);
+  if (!target || isTargetLocked(target) || isTargetHidden(target) || !target.positionKey) return false;
+  const axis = ['x', 'y', 'z'][axisIndex];
+  if (target.kind === 'modelMesh') {
+    if (!target.object || !target.object.position || !axis) return false;
+    target.object.position[axis] = Number((target.object.position[axis] + delta).toFixed(4));
+    saveModelParts();
+  } else {
+    const pos = ensureVec(target.object, target.positionKey, 3);
+    pos[axisIndex] = Number(((Number(pos[axisIndex]) || 0) + delta).toFixed(2));
+    update3DTransforms();
+  }
+  syncRaw();
+  update3DInspector();
+  update3DSelection();
+  refreshHierarchy();
+  return true;
+}
+
+function handleKeyboardNudge(e) {
+  const keys = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [2, -1], ArrowDown: [2, 1] };
+  const entry = keys[e.key];
+  if (!entry || e.ctrlKey || e.metaKey) return false;
+  const moved = nudgeSelectedObject(entry[0], entry[1] * keyboardNudgeStep(e));
+  e.preventDefault();
+  return moved;
+}
+
 function handle3DShortcuts(e) {
   if ($('#tab-map').style.display === 'none') return;
   const tag = document.activeElement && document.activeElement.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (handleKeyboardNudge(e)) return;
   if (e.key === 'w' || e.key === 'W') { setTransformMode('translate'); e.preventDefault(); }
   if (e.key === 'e' || e.key === 'E') { setTransformMode('rotate'); e.preventDefault(); }
   if (e.key === 'r' || e.key === 'R') { setTransformMode('scale'); e.preventDefault(); }
@@ -2181,6 +2222,7 @@ function getGroundY() {
 
 function on3DPointerDown(e) {
   if (!map3d.camera || !config) return;
+  if (map3d.transformDragging || (map3d.transformControls && map3d.transformControls.dragging)) return;
   const hit = pickEditableObject(e);
   if (!hit) return;
   setSelectedObject(hit.key, { focus: modelEditMode && hit.key !== selectedObjectKey });
@@ -2225,6 +2267,7 @@ function on3DPointerUp(e) {
 function pickEditableObject(e) {
   const hits = raycast(e, map3d.scene.children);
   for (const hit of hits) {
+    if (isTransformControlObject(hit.object)) return null;
     let obj = hit.object;
     while (obj) {
       if (obj.userData.editKey && map3d.editObjects.has(obj.userData.editKey)) return { key: obj.userData.editKey, object: obj };
@@ -2232,6 +2275,15 @@ function pickEditableObject(e) {
     }
   }
   return null;
+}
+
+function isTransformControlObject(object) {
+  let obj = object;
+  while (obj) {
+    if (obj === map3d.transformControls) return true;
+    obj = obj.parent;
+  }
+  return false;
 }
 
 function intersectGround(e) {
