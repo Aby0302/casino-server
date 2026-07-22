@@ -35,7 +35,7 @@ const UI_CYAN := Color(0.250, 0.850, 1.0, 1.0)
 
 var config_request: HTTPRequest
 var map_request: HTTPRequest
-var register_request: HTTPRequest
+var auth_request: HTTPRequest
 var cloud_start_request: HTTPRequest
 var cloud_input_request: HTTPRequest
 var cloud_frame_request: HTTPRequest
@@ -48,16 +48,25 @@ var balance_label: Label
 var player_label: Label
 var machine_label: Label
 var prompt_label: Label
-var register_result_label: Label
-var player_id_edit: LineEdit
-var player_name_edit: LineEdit
-var register_button: Button
+var auth_result_label: Label
+var auth_login_mode_button: Button
+var auth_register_mode_button: Button
+var auth_identifier_edit: LineEdit
+var auth_username_edit: LineEdit
+var auth_email_edit: LineEdit
+var auth_password_edit: LineEdit
+var auth_submit_button: Button
 var open_game_button: Button
 var websocket: WebSocketPeer = WebSocketPeer.new()
 var websocket_started := false
 var websocket_last_state := WebSocketPeer.STATE_CLOSED
 var player_id := "godot-player"
 var player_name := "Godot Player"
+var player_email := ""
+var auth_cookie := ""
+var authenticated := false
+var auth_mode := "login"
+var pending_auth_action := ""
 var machines: Array = []
 var nearby_machine_index := -1
 var map_collider_count := 0
@@ -95,7 +104,12 @@ func _ready() -> void:
     _refresh_player_ui()
     _refresh_machine_ui()
     _load_remote_config()
-    _connect_balance_socket()
+    if auth_cookie.is_empty():
+        balance_label.text = "Bakiye: giris bekleniyor"
+        if auth_result_label != null:
+            auth_result_label.text = "Giris yap veya yeni hesap olustur."
+    else:
+        _check_auth_session()
     _setup_mobile_controls()
     if not _check_hot_reload_state():
         print("Ready - use Ctrl+R or RELOAD button to hot reload scripts")
@@ -423,13 +437,13 @@ func _build_hud(canvas: CanvasLayer) -> void:
 
 func _build_registration_panel(canvas: CanvasLayer) -> void:
     var panel := PanelContainer.new()
-    panel.name = "RegistrationPanel"
+    panel.name = "AuthPanel"
     panel.anchor_left = 1.0
     panel.anchor_right = 1.0
     panel.offset_left = -398.0
     panel.offset_right = -18.0
     panel.offset_top = 18.0
-    panel.offset_bottom = 318.0
+    panel.offset_bottom = 418.0
     panel.add_theme_stylebox_override("panel", _panel_style(UI_PANEL, Color(UI_PINK.r, UI_PINK.g, UI_PINK.b, 0.30), 24, 22, 20.0))
     canvas.add_child(panel)
 
@@ -443,27 +457,54 @@ func _build_registration_panel(canvas: CanvasLayer) -> void:
     box.add_child(eyebrow)
 
     var title := Label.new()
-    title.text = "Salon Girisi"
+    title.text = "Hesap Girisi"
     _style_label(title, 23, UI_TEXT)
     box.add_child(title)
 
-    player_id_edit = LineEdit.new()
-    player_id_edit.placeholder_text = "Oyuncu ID"
-    player_id_edit.text = player_id
-    _style_line_edit(player_id_edit)
-    box.add_child(player_id_edit)
+    var modes := HBoxContainer.new()
+    modes.add_theme_constant_override("separation", 8)
+    box.add_child(modes)
 
-    player_name_edit = LineEdit.new()
-    player_name_edit.placeholder_text = "Oyuncu adi"
-    player_name_edit.text = player_name
-    _style_line_edit(player_name_edit)
-    box.add_child(player_name_edit)
+    auth_login_mode_button = Button.new()
+    auth_login_mode_button.text = "Giris"
+    auth_login_mode_button.pressed.connect(func() -> void: _set_auth_mode("login"))
+    _style_button(auth_login_mode_button, UI_CYAN)
+    modes.add_child(auth_login_mode_button)
 
-    register_button = Button.new()
-    register_button.text = "Kayit Ol ve Devam Et"
-    register_button.pressed.connect(_register_player)
-    _style_button(register_button, UI_PINK)
-    box.add_child(register_button)
+    auth_register_mode_button = Button.new()
+    auth_register_mode_button.text = "Kayit"
+    auth_register_mode_button.pressed.connect(func() -> void: _set_auth_mode("register"))
+    _style_button(auth_register_mode_button, UI_PINK)
+    modes.add_child(auth_register_mode_button)
+
+    auth_identifier_edit = LineEdit.new()
+    auth_identifier_edit.placeholder_text = "Email veya kullanici adi"
+    auth_identifier_edit.text = player_email if not player_email.is_empty() else player_id
+    _style_line_edit(auth_identifier_edit)
+    box.add_child(auth_identifier_edit)
+
+    auth_username_edit = LineEdit.new()
+    auth_username_edit.placeholder_text = "Kullanici adi"
+    auth_username_edit.text = player_id
+    _style_line_edit(auth_username_edit)
+    box.add_child(auth_username_edit)
+
+    auth_email_edit = LineEdit.new()
+    auth_email_edit.placeholder_text = "Email"
+    auth_email_edit.text = player_email
+    _style_line_edit(auth_email_edit)
+    box.add_child(auth_email_edit)
+
+    auth_password_edit = LineEdit.new()
+    auth_password_edit.placeholder_text = "Sifre"
+    auth_password_edit.secret = true
+    _style_line_edit(auth_password_edit)
+    box.add_child(auth_password_edit)
+
+    auth_submit_button = Button.new()
+    auth_submit_button.pressed.connect(_submit_auth)
+    _style_button(auth_submit_button, UI_PINK)
+    box.add_child(auth_submit_button)
 
     open_game_button = Button.new()
     open_game_button.text = "Yakindaki Makineyi Ac"
@@ -472,11 +513,12 @@ func _build_registration_panel(canvas: CanvasLayer) -> void:
     _style_button(open_game_button, UI_GOLD)
     box.add_child(open_game_button)
 
-    register_result_label = Label.new()
-    register_result_label.text = "Kayit tamamlaninca bakiye baglantisi yenilenir."
-    register_result_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    _style_label(register_result_label, 12, UI_MUTED)
-    box.add_child(register_result_label)
+    auth_result_label = Label.new()
+    auth_result_label.text = "Giris yap veya yeni hesap olustur."
+    auth_result_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    _style_label(auth_result_label, 12, UI_MUTED)
+    box.add_child(auth_result_label)
+    _refresh_auth_ui()
 
 
 func _build_prompt_panel(canvas: CanvasLayer) -> void:
@@ -1164,6 +1206,11 @@ func _update_interaction_prompt() -> void:
         return
 
     var nearby: Dictionary = machines[nearby_machine_index]
+    if not authenticated:
+        prompt_label.text = "%s hazir. Oynamak icin once giris yap." % String(nearby.get("id", "slot"))
+        open_game_button.disabled = true
+        return
+
     prompt_label.text = "E: %s koltuguna otur | G: ekrani ac | Space veya makine dugmesi: spin" % String(nearby.get("id", "slot"))
     open_game_button.disabled = false
 
@@ -1189,6 +1236,11 @@ func _sit_at_nearby_machine() -> void:
 
 
 func _open_nearby_game() -> void:
+    if not authenticated:
+        set_status("Oyun acmak icin once giris yap")
+        if auth_result_label != null:
+            auth_result_label.text = "Oyun acmak icin email/kullanici adi ile giris yap."
+        return
     if nearby_machine_index < 0:
         set_status("Yakinda acilacak oyun yok")
         return
@@ -1198,6 +1250,12 @@ func _open_nearby_game() -> void:
 
 func _start_machine_game(machine_index: int, spin_when_ready: bool = false) -> void:
     if machine_index < 0 or machine_index >= machines.size():
+        return
+    if not authenticated:
+        pending_spin_after_stream = false
+        set_status("Oyun baslatmak icin once giris yap")
+        if auth_result_label != null:
+            auth_result_label.text = "Oyun baslatmak icin hesabina giris yap."
         return
 
     if machine_index == active_machine_index and _active_machine_uses_client_render():
@@ -1719,6 +1777,12 @@ func _show_cloud_frame(frame: PackedByteArray) -> void:
 
 
 func _spin_active_machine() -> void:
+    if not authenticated:
+        set_status("Spin icin once giris yap")
+        if auth_result_label != null:
+            auth_result_label.text = "Spin atmak icin hesabina giris yap."
+        return
+
     if active_machine_index < 0:
         if nearby_machine_index >= 0:
             _start_machine_game(nearby_machine_index, true)
@@ -1865,54 +1929,189 @@ func _find_bytes(buffer: PackedByteArray, pattern: PackedByteArray, start: int) 
     return -1
 
 
-func _register_player() -> void:
-    var requested_id := player_id_edit.text.strip_edges()
-    var requested_name := player_name_edit.text.strip_edges()
-    if requested_name.is_empty():
-        requested_name = requested_id
-
-    register_button.disabled = true
-    register_result_label.text = "Oyuncu kaydediliyor..."
-
-    if register_request != null:
-        register_request.queue_free()
-
-    register_request = HTTPRequest.new()
-    register_request.name = "RegisterRequest"
-    add_child(register_request)
-    register_request.request_completed.connect(_on_register_response)
-
-    var body := JSON.stringify({ "id": requested_id, "name": requested_name })
-    var headers := PackedStringArray(["Content-Type: application/json"])
-    var err := register_request.request("%s/api/register" % _base_url(), headers, HTTPClient.METHOD_POST, body)
-    if err != OK:
-        register_button.disabled = false
-        register_result_label.text = "Kayit istegi baslatilamadi: %s" % error_string(err)
+func _set_auth_mode(mode: String) -> void:
+    auth_mode = "register" if mode == "register" else "login"
+    _refresh_auth_ui()
 
 
-func _on_register_response(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
-    register_button.disabled = false
-    if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
-        register_result_label.text = "Kayit basarisiz: result=%s code=%s" % [result, response_code]
+func _refresh_auth_ui() -> void:
+    if auth_identifier_edit != null:
+        auth_identifier_edit.visible = auth_mode == "login"
+    if auth_username_edit != null:
+        auth_username_edit.visible = auth_mode == "register"
+    if auth_email_edit != null:
+        auth_email_edit.visible = auth_mode == "register"
+    if auth_password_edit != null:
+        auth_password_edit.placeholder_text = "Sifre"
+    if auth_submit_button != null:
+        auth_submit_button.text = "Giris Yap" if auth_mode == "login" else "Kayit Ol"
+    if auth_login_mode_button != null:
+        auth_login_mode_button.modulate = Color.WHITE if auth_mode == "login" else Color(0.72, 0.72, 0.78, 1.0)
+    if auth_register_mode_button != null:
+        auth_register_mode_button.modulate = Color.WHITE if auth_mode == "register" else Color(0.72, 0.72, 0.78, 1.0)
+    if open_game_button != null:
+        open_game_button.disabled = not authenticated or nearby_machine_index < 0
+
+
+func _set_auth_busy(busy: bool) -> void:
+    if auth_submit_button != null:
+        auth_submit_button.disabled = busy
+    if auth_login_mode_button != null:
+        auth_login_mode_button.disabled = busy
+    if auth_register_mode_button != null:
+        auth_register_mode_button.disabled = busy
+
+
+func _submit_auth() -> void:
+    if auth_mode == "register":
+        _register_account()
+    else:
+        _login_account()
+
+
+func _login_account() -> void:
+    var identifier := auth_identifier_edit.text.strip_edges()
+    var password := auth_password_edit.text
+    if identifier.is_empty() or password.is_empty():
+        auth_result_label.text = "Email/kullanici adi ve sifre gerekli."
         return
+
+    var body := JSON.stringify({ "identifier": identifier, "password": password })
+    _start_auth_request("login", HTTPClient.METHOD_POST, "/api/login", body)
+
+
+func _register_account() -> void:
+    var username := auth_username_edit.text.strip_edges()
+    var email := auth_email_edit.text.strip_edges()
+    var password := auth_password_edit.text
+    if username.length() < 3:
+        auth_result_label.text = "Kullanici adi en az 3 karakter olmali."
+        return
+    if email.find("@") < 1 or email.find(".") < 3:
+        auth_result_label.text = "Gecerli bir email gir."
+        return
+    if password.length() < 6:
+        auth_result_label.text = "Sifre en az 6 karakter olmali."
+        return
+
+    var body := JSON.stringify({ "username": username, "email": email, "password": password })
+    _start_auth_request("register", HTTPClient.METHOD_POST, "/api/register", body)
+
+
+func _check_auth_session() -> void:
+    _start_auth_request("session", HTTPClient.METHOD_GET, "/api/session", "")
+
+
+func _start_auth_request(action: String, method: int, path: String, body: String) -> void:
+    pending_auth_action = action
+    _set_auth_busy(true)
+    if auth_result_label != null:
+        auth_result_label.text = "Oturum kontrol ediliyor..." if action == "session" else "Sunucuya baglaniyor..."
+
+    if auth_request != null:
+        auth_request.queue_free()
+
+    auth_request = HTTPRequest.new()
+    auth_request.name = "AuthRequest"
+    add_child(auth_request)
+    auth_request.request_completed.connect(_on_auth_response)
+
+    var err := auth_request.request("%s%s" % [_base_url(), path], _auth_headers(not body.is_empty()), method, body)
+    if err != OK:
+        _set_auth_busy(false)
+        if auth_result_label != null:
+            auth_result_label.text = "Auth istegi baslatilamadi: %s" % error_string(err)
+
+
+func _on_auth_response(result: int, response_code: int, headers: PackedStringArray, body: PackedByteArray) -> void:
+    _set_auth_busy(false)
+    _store_auth_cookie(headers)
 
     var parsed: Variant = JSON.parse_string(body.get_string_from_utf8())
-    if typeof(parsed) != TYPE_DICTIONARY:
-        register_result_label.text = "Kayit cevabi JSON formatinda degil"
+    var response: Dictionary = parsed if typeof(parsed) == TYPE_DICTIONARY else {}
+
+    if result != HTTPRequest.RESULT_SUCCESS:
+        if pending_auth_action == "session":
+            _clear_authenticated("Giris yap veya yeni hesap olustur.")
+        elif auth_result_label != null:
+            auth_result_label.text = "Baglanti basarisiz: result=%s" % result
         return
 
-    var response: Dictionary = parsed
-    if not bool(response.get("ok", false)):
-        register_result_label.text = "Kayit basarisiz"
+    if response_code != 200:
+        var message := String(response.get("error", response.get("message", "Auth basarisiz")))
+        if pending_auth_action == "session":
+            _clear_authenticated("Oturum suresi doldu. Tekrar giris yap.")
+        elif auth_result_label != null:
+            auth_result_label.text = message
         return
 
-    player_id = String(response.get("id", player_id))
-    player_name = String(response.get("name", player_name))
+    if pending_auth_action == "session" and not bool(response.get("authenticated", false)):
+        _clear_authenticated("Giris yap veya yeni hesap olustur.")
+        return
+
+    if pending_auth_action != "session" and not bool(response.get("ok", false)):
+        if auth_result_label != null:
+            auth_result_label.text = String(response.get("error", "Auth basarisiz"))
+        return
+
+    var player_value: Variant = response.get("player", {})
+    if not player_value is Dictionary:
+        if auth_result_label != null:
+            auth_result_label.text = "Oyuncu bilgisi eksik."
+        return
+
+    _apply_authenticated_player(player_value as Dictionary)
+
+
+func _apply_authenticated_player(player: Dictionary) -> void:
+    player_id = String(player.get("id", player_id))
+    player_name = String(player.get("username", player.get("name", player_id)))
+    player_email = String(player.get("email", player_email))
     session_id = player_id
+    authenticated = true
+    if auth_password_edit != null:
+        auth_password_edit.text = ""
     _save_player_profile()
     _refresh_player_ui()
+    _refresh_auth_ui()
     _reconnect_balance_socket()
-    register_result_label.text = "Hazir: %s" % player_id
+    if auth_result_label != null:
+        auth_result_label.text = "Hazir: %s" % player_id
+
+
+func _clear_authenticated(message: String) -> void:
+    authenticated = false
+    auth_cookie = ""
+    if websocket_started:
+        websocket.close()
+    websocket_started = false
+    balance_label.text = "Bakiye: giris bekleniyor"
+    _save_player_profile()
+    _refresh_player_ui()
+    _refresh_auth_ui()
+    if auth_result_label != null:
+        auth_result_label.text = message
+
+
+func _auth_headers(json_body: bool = false) -> PackedStringArray:
+    var headers := PackedStringArray()
+    if json_body:
+        headers.append("Content-Type: application/json")
+    if not auth_cookie.is_empty():
+        headers.append("Cookie: %s" % auth_cookie)
+    return headers
+
+
+func _store_auth_cookie(headers: PackedStringArray) -> void:
+    for header in headers:
+        var raw := String(header)
+        if not raw.to_lower().begins_with("set-cookie:"):
+            continue
+        var value := raw.substr(raw.find(":") + 1).strip_edges()
+        var cookie_pair := value.split(";", false)[0].strip_edges()
+        if cookie_pair.begins_with("casinoAuth="):
+            auth_cookie = cookie_pair
+            return
 
 
 func _load_player_profile() -> void:
@@ -1920,6 +2119,8 @@ func _load_player_profile() -> void:
     if config.load(PROFILE_PATH) == OK:
         player_id = String(config.get_value("player", "id", player_id))
         player_name = String(config.get_value("player", "name", player_name))
+        player_email = String(config.get_value("player", "email", player_email))
+        auth_cookie = String(config.get_value("player", "auth_cookie", auth_cookie))
     session_id = player_id
 
 
@@ -1927,6 +2128,8 @@ func _save_player_profile() -> void:
     var config := ConfigFile.new()
     config.set_value("player", "id", player_id)
     config.set_value("player", "name", player_name)
+    config.set_value("player", "email", player_email)
+    config.set_value("player", "auth_cookie", auth_cookie)
     var err := config.save(PROFILE_PATH)
     if err != OK:
         push_warning("Could not save player profile: %s" % error_string(err))
@@ -1934,11 +2137,13 @@ func _save_player_profile() -> void:
 
 func _refresh_player_ui() -> void:
     if player_label != null:
-        player_label.text = "%s | ID: %s" % [player_name, player_id]
-    if player_id_edit != null:
-        player_id_edit.text = player_id
-    if player_name_edit != null:
-        player_name_edit.text = player_name
+        player_label.text = "%s | ID: %s" % [player_name, player_id] if authenticated else "Giris bekleniyor"
+    if auth_identifier_edit != null and not authenticated:
+        auth_identifier_edit.text = player_email if not player_email.is_empty() else player_id
+    if auth_username_edit != null and not authenticated:
+        auth_username_edit.text = player_id
+    if auth_email_edit != null and not authenticated:
+        auth_email_edit.text = player_email
 
 
 func _refresh_machine_ui() -> void:
@@ -1950,12 +2155,16 @@ func _refresh_machine_ui() -> void:
         nearby_text = String(machines[nearby_machine_index].get("id", "slot"))
 
     machine_label.text = "Makineler: %s | Yakinda: %s | Carpisma: harita %s, makine %s" % [machines.size(), nearby_text, map_collider_count, machine_collider_count]
+    if open_game_button != null:
+        open_game_button.disabled = not authenticated or nearby_machine_index < 0
 
 
 func _connect_balance_socket() -> void:
     websocket = WebSocketPeer.new()
     var socket_url := _base_url().replace("https://", "wss://").replace("http://", "ws://")
     socket_url += "/?game=balance&sessionID=%s" % session_id.uri_encode()
+    if not auth_cookie.is_empty():
+        websocket.set("handshake_headers", PackedStringArray(["Cookie: %s" % auth_cookie]))
 
     var err := websocket.connect_to_url(socket_url)
     if err != OK:
