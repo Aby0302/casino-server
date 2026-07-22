@@ -148,6 +148,10 @@ function persistBalance(sessionID, displayBalance) {
   schedulePersist();
 }
 
+function notifyPlayersChanged(ctx) {
+  if (typeof ctx.onPlayersChanged === 'function') ctx.onPlayersChanged();
+}
+
 // ── Yardimcilar ──
 
 function json(res, status, body) {
@@ -347,7 +351,8 @@ function handleAdminRoute(req, res, ctx) {
         updatedAt: new Date().toISOString(),
       };
       schedulePersist();
-      ctx.setWalletBalance(id, balance);
+      if (typeof ctx.setWalletBalance === 'function') ctx.setWalletBalance(id, balance);
+      else notifyPlayersChanged(ctx);
       return json(res, 200, { ok: true, id });
     }
 
@@ -358,20 +363,26 @@ function handleAdminRoute(req, res, ctx) {
 
       if (req.method === 'PUT') {
         const body = await readJsonBody(req);
+        let notifiedByWallet = false;
         if (body.name != null) players[id].name = String(body.name).slice(0, 64);
         if (body.balance != null) {
           const balance = Math.max(0, Math.round(Number(body.balance) || 0));
           players[id].balance = balance;
-          ctx.setWalletBalance(id, balance);
+          if (typeof ctx.setWalletBalance === 'function') {
+            ctx.setWalletBalance(id, balance);
+            notifiedByWallet = true;
+          }
         }
         players[id].updatedAt = new Date().toISOString();
         schedulePersist();
+        if (!notifiedByWallet) notifyPlayersChanged(ctx);
         return json(res, 200, { ok: true });
       }
 
       if (req.method === 'DELETE') {
         delete players[id];
         schedulePersist();
+        notifyPlayersChanged(ctx);
         return json(res, 200, { ok: true });
       }
     }

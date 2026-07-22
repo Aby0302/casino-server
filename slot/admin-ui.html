@@ -285,6 +285,70 @@ async function api(url, opts = {}) {
   return body;
 }
 
+let liveSocket = null;
+let liveSocketTimer = null;
+let liveRefreshTimer = null;
+let liveSocketStatus = 'kapalı';
+
+function activeTab() {
+  const btn = document.querySelector('nav button.active');
+  return btn ? btn.dataset.tab : '';
+}
+
+function setLiveSocketStatus(status) {
+  liveSocketStatus = status;
+  $('#statusLine').textContent = `${location.host} · canlı ${status}`;
+}
+
+function liveSocketUrl() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return protocol + '//' + location.host + '/?game=admin';
+}
+
+function scheduleLiveRefresh(type) {
+  if (liveRefreshTimer) return;
+  liveRefreshTimer = setTimeout(async () => {
+    liveRefreshTimer = null;
+    try {
+      const tab = activeTab();
+      if (type === 'config:updated') {
+        if (tab === 'map') await loadConfig();
+        return;
+      }
+      if (tab === 'players') await loadPlayers();
+      if (tab === 'status') await loadStatus();
+    } catch (err) {
+      console.warn('[admin] canlı yenileme başarısız:', err);
+    }
+  }, 200);
+}
+
+function connectLiveSocket() {
+  if (liveSocket) liveSocket.close();
+  if (liveSocketTimer) clearTimeout(liveSocketTimer);
+  setLiveSocketStatus('bağlanıyor');
+
+  const ws = new WebSocket(liveSocketUrl());
+  liveSocket = ws;
+
+  ws.addEventListener('open', () => setLiveSocketStatus('bağlı'));
+  ws.addEventListener('message', event => {
+    let payload;
+    try { payload = JSON.parse(event.data); } catch (_) { return; }
+    if (!payload || typeof payload !== 'object') return;
+    if (payload.type === 'config:updated') scheduleLiveRefresh('config:updated');
+    if (payload.type === 'players:updated' || Object.prototype.hasOwnProperty.call(payload, 'balance')) {
+      scheduleLiveRefresh('players:updated');
+    }
+  });
+  ws.addEventListener('close', () => {
+    if (liveSocket !== ws) return;
+    setLiveSocketStatus('kapalı');
+    liveSocketTimer = setTimeout(connectLiveSocket, 1800);
+  });
+  ws.addEventListener('error', () => setLiveSocketStatus('hata'));
+}
+
 // ── Giriş ──
 async function tryLogin() {
   $('#loginMsg').textContent = '...';
@@ -299,6 +363,7 @@ async function tryLogin() {
     $('#login').style.display = 'none';
     $('#logoutBtn').style.display = '';
     refreshAll();
+    connectLiveSocket();
   } catch (e) { $('#loginMsg').textContent = e.message; }
 }
 $('#loginBtn').onclick = tryLogin;
@@ -1790,7 +1855,7 @@ function fmtSize(n) {
 }
 
 async function refreshAll() {
-  $('#statusLine').textContent = location.host;
+  setLiveSocketStatus(liveSocketStatus);
   loadPlayers();
 }
 
@@ -1799,6 +1864,7 @@ api('/admin/api/players').then(() => {
   $('#login').style.display = 'none';
   $('#logoutBtn').style.display = '';
   refreshAll();
+  connectLiveSocket();
 }).catch(() => {});
 </script>
 </body>

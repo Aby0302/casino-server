@@ -338,6 +338,7 @@ const server = http.createServer((req, res) => {
     listWallets: () => [...walletSessions.keys()],
     listCloudSessions,
     onConfigSaved: () => broadcastConfigUpdate(),
+    onPlayersChanged: () => broadcastPlayersUpdate(),
   })) {
     return;
   }
@@ -549,8 +550,14 @@ function displayBalance(sessionID) {
 function adjustDisplayBalance(sessionID, amount) {
   const session = getWalletSession(sessionID);
   session.balance = Math.max(0, session.balance + Math.round(amount * PRECISION));
+  return notifyWalletChanged(sessionID);
+}
+
+function notifyWalletChanged(sessionID) {
   const bal = displayBalance(sessionID);
   persistBalance(sessionID, bal);
+  broadcastBalance(sessionID);
+  broadcastPlayersUpdate();
   return bal;
 }
 
@@ -657,7 +664,7 @@ function handleWalletRoute(url, req, res) {
         };
         session.event = null;
 
-        broadcastBalance(sessionID);
+        notifyWalletChanged(sessionID);
         return json(res, 200, {
           balance: { amount: session.balance, currency: 'USD' },
           round: session.round,
@@ -766,7 +773,16 @@ function pickWinningPositions(grid) {
 
 const wss = new WebSocketServer({ server });
 
-const wsSessions = new Map(); // ws -> sessionID
+const wsSessions = new Map(); // ws -> { sessionID, channel }
+
+function socketChannelFromRequest(req) {
+  try {
+    const url = new URL(req.url, 'http://localhost');
+    return url.searchParams.get('game') === 'admin' ? 'admin' : 'balance';
+  } catch (err) {
+    return 'balance';
+  }
+}
 
 function sessionIDFromRequest(req) {
   try {
@@ -785,10 +801,17 @@ function sendBalance(ws, sessionID, type = 'balance') {
 }
 
 function broadcastBalance(sessionID) {
-  for (const [client, clientSessionID] of wsSessions.entries()) {
-    if (clientSessionID === sessionID && client.readyState === 1) {
+  for (const [client, meta] of wsSessions.entries()) {
+    if (meta.sessionID === sessionID && client.readyState === 1) {
       sendBalance(client, sessionID);
     }
+  }
+}
+
+function broadcastPlayersUpdate() {
+  const msg = JSON.stringify({ type: 'players:updated', ts: Date.now() });
+  for (const [client] of wsSessions.entries()) {
+    if (client.readyState === 1) client.send(msg);
   }
 }
 
@@ -803,14 +826,24 @@ wss.on('connection', (ws, req) => {
   // External clients (e.g. the Unity lobby) get a read-only balance feed;
   // only the internal cloud-stream browser may mutate wallet state.
   const internal = isInternalGameRequest(req);
-  const sessionID = sessionIDFromRequest(req);
-  wsSessions.set(ws, sessionID);
-  getWalletSession(sessionID);
+  const channel = socketChannelFromRequest(req);
+  const sessionID = channel === 'admin' ? null : sessionIDFromRequest(req);
+  wsSessions.set(ws, { sessionID, channel });
 
-  sendBalance(ws, sessionID, 'connected');
-  sendBalance(ws, sessionID);
+  if (channel === 'admin') {
+    ws.send(JSON.stringify({ type: 'connected', channel: 'admin' }));
+  } else {
+    getWalletSession(sessionID);
+    sendBalance(ws, sessionID, 'connected');
+    sendBalance(ws, sessionID);
+  }
 
   ws.on('message', (raw) => {
+    if (channel === 'admin') {
+      ws.send(JSON.stringify({ type: 'error', message: 'Read-only admin live feed' }));
+      return;
+    }
+
     if (!internal) {
       ws.send(JSON.stringify({ type: 'error', message: 'Read-only session: play through the cloud stream' }));
       return;
@@ -861,21 +894,18 @@ wss.on('connection', (ws, req) => {
             bet,
             events
           }));
-          broadcastBalance(sessionID);
           break;
         }
 
         case 'bet': {
           const amount = msg.amount || 0;
           adjustDisplayBalance(sessionID, -amount);
-          broadcastBalance(sessionID);
           break;
         }
 
         case 'win': {
           const amount = msg.amount || 0;
           adjustDisplayBalance(sessionID, amount);
-          broadcastBalance(sessionID);
           break;
         }
 
