@@ -74,11 +74,13 @@
   .hierarchy-item:hover { background: rgba(255,255,255,.05); }
   .hierarchy-item.selected { border-color: var(--gold); background: rgba(231,181,60,.12); }
   .hierarchy-item.locked { color: #b9afce; }
+  .hierarchy-item.hidden .name { opacity: .55; text-decoration: line-through; }
   .hierarchy-item.child { margin-left: 14px; width: calc(100% - 14px); }
   .hierarchy-title { display: flex; gap: 8px; align-items: center; min-width: 0; }
   .hierarchy-title .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .hierarchy-lock { margin-left: auto; cursor: pointer; opacity: .85; }
-  .hierarchy-lock:hover { opacity: 1; }
+  .hierarchy-actions { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; flex: 0 0 auto; }
+  .hierarchy-lock, .hierarchy-visibility { cursor: pointer; opacity: .85; font-size: 11px; color: var(--dim); }
+  .hierarchy-lock:hover, .hierarchy-visibility:hover { opacity: 1; color: var(--gold); }
   .hierarchy-item small { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .scene-wrap { min-width: 0; }
   #map3dViewport { position: relative; min-height: 430px; height: min(62vh, 650px); overflow: hidden; border: 1px solid #4a3675;
@@ -268,6 +270,7 @@ const map3d = {
   transformControls: null, transformMode: 'translate', suppressTransformSync: false,
   raycaster: null, pointer: null, dragPlane: null, dragOffset: null,
   machineGroups: [], mapObject: null, spawnGroup: null, editRoot: null, grid: null,
+  selectionBox: null, selectionBoxBounds: null,
   editObjects: new Map(),
   modelCache: new Map(), dragging: false, raf: 0, resizeObserver: null,
 };
@@ -590,10 +593,12 @@ function targetSupportsMode(target, mode) {
 function targetLockKey(target) { return target && target.lockKey ? target.lockKey : 'locked'; }
 
 function applyObjectParts(model, parts) {
-  if (!model || !parts) return;
+  if (!model) return;
+  const safeParts = parts && typeof parts === 'object' ? parts : {};
   model.traverse(child => {
     if (child.isMesh) {
-      const part = parts[child.name];
+      const part = safeParts[child.name];
+      child.visible = !(part && (part.hidden === true || part.visible === false));
       if (part) {
         if (part.position) child.position.set(part.position[0], part.position[1], part.position[2]);
         if (part.rotation) child.rotation.set(degToRad(part.rotation[0]), degToRad(part.rotation[1]), degToRad(part.rotation[2]));
@@ -674,13 +679,17 @@ function saveModelParts() {
     const p = mesh.position;
     const r = mesh.rotation;
     const s = mesh.scale;
-    if (p.x !== 0 || p.y !== 0 || p.z !== 0 || r.x !== 0 || r.y !== 0 || r.z !== 0 || s.x !== 1 || s.y !== 1 || s.z !== 1) {
-      parts[name] = {
+    const hasTransform = p.x !== 0 || p.y !== 0 || p.z !== 0 || r.x !== 0 || r.y !== 0 || r.z !== 0 || s.x !== 1 || s.y !== 1 || s.z !== 1;
+    const part = {};
+    if (hasTransform) {
+      Object.assign(part, {
         position: [Number(p.x.toFixed(2)), Number(p.y.toFixed(2)), Number(p.z.toFixed(2))],
         rotation: [Number(radToDeg(r.x).toFixed(2)), Number(radToDeg(r.y).toFixed(2)), Number(radToDeg(r.z).toFixed(2))],
         scale: [Number(s.x.toFixed(4)), Number(s.y.toFixed(4)), Number(s.z.toFixed(4))],
-      };
+      });
     }
+    if (mesh.visible === false) part.hidden = true;
+    if (Object.keys(part).length) parts[name] = part;
   });
   if (Object.keys(parts).length) owner[partsKey] = parts;
   else delete owner[partsKey];
@@ -719,6 +728,60 @@ function setTargetLocked(targetOrKey, locked) {
   if (!target || !target.object) return;
   if (locked) target.object[targetLockKey(target)] = true;
   else delete target.object[targetLockKey(target)];
+}
+
+function getModelPartsOwner(targetOrKey) {
+  const target = typeof targetOrKey === 'string' ? getConfigTarget(targetOrKey) : targetOrKey;
+  if (!target || target.kind !== 'modelMesh') return null;
+  const ownerKey = target.ownerKey || (Number.isInteger(target.machineIndex) ? machineKey(target.machineIndex) : '');
+  const ownerTarget = getConfigTarget(ownerKey);
+  if (ownerTarget && ownerTarget.kind === 'map') return { target, owner: config, partsKey: 'mapParts' };
+  if (ownerTarget && ownerTarget.kind === 'machine' && config.machines[ownerTarget.machineIndex]) {
+    return { target, owner: config.machines[ownerTarget.machineIndex], partsKey: 'modelParts' };
+  }
+  return null;
+}
+
+function getModelPartConfig(targetOrKey, create = false) {
+  const info = getModelPartsOwner(targetOrKey);
+  if (!info || !info.target.meshName) return null;
+  if (!info.owner[info.partsKey] || typeof info.owner[info.partsKey] !== 'object') {
+    if (!create) return null;
+    info.owner[info.partsKey] = {};
+  }
+  if (!info.owner[info.partsKey][info.target.meshName] || typeof info.owner[info.partsKey][info.target.meshName] !== 'object') {
+    if (!create) return null;
+    info.owner[info.partsKey][info.target.meshName] = {};
+  }
+  return info.owner[info.partsKey][info.target.meshName];
+}
+
+function isTargetVisibilityToggleable(targetOrKey) {
+  const target = typeof targetOrKey === 'string' ? getConfigTarget(targetOrKey) : targetOrKey;
+  return Boolean(target && target.kind === 'modelMesh');
+}
+
+function isTargetHidden(targetOrKey) {
+  const target = typeof targetOrKey === 'string' ? getConfigTarget(targetOrKey) : targetOrKey;
+  if (!target || target.kind !== 'modelMesh') return false;
+  if (target.object && target.object.visible === false) return true;
+  const part = getModelPartConfig(target, false);
+  return Boolean(part && (part.hidden === true || part.visible === false));
+}
+
+function toggleTargetVisibility(key) {
+  const target = getConfigTarget(key);
+  if (!isTargetVisibilityToggleable(target)) return;
+  selectedObjectKey = target.key;
+  if (Number.isInteger(target.machineIndex)) selectedMachineIndex = target.machineIndex;
+  const hide = !isTargetHidden(target);
+  if (target.object) target.object.visible = !hide;
+  saveModelParts();
+  syncRaw();
+  refreshHierarchy();
+  update3DInspector();
+  update3DSelection();
+  toast((hide ? 'Gizlendi: ' : 'Gösterildi: ') + target.label);
 }
 
 function toggleTargetLock(key) {
@@ -965,7 +1028,7 @@ function setSelectedObject(key, opts = {}) {
   update3DInspector();
   document.querySelectorAll('.machine').forEach((card, i) => card.classList.toggle('selected', i === selectedMachineIndex));
   attachTransformControl();
-  if (opts.focus) focusSelectedMachine();
+  if (opts.focus) focusSelectedObject();
 }
 
 function refreshHierarchy() {
@@ -974,9 +1037,13 @@ function refreshHierarchy() {
   const button = (key, title, small, child = false) => {
     const target = getConfigTarget(key);
     const locked = isTargetLocked(target);
+    const hidden = isTargetHidden(target);
+    const visibility = isTargetVisibilityToggleable(target)
+      ? `<span class="hierarchy-visibility" role="button" tabindex="0" title="${hidden ? 'Göster' : 'Gizle'}" data-visible-key="${esc(key)}">${hidden ? 'Aç' : 'Kapat'}</span>`
+      : '';
     return `
-    <button class="hierarchy-item ${child ? 'child ' : ''}${key === selectedObjectKey ? 'selected ' : ''}${locked ? 'locked' : ''}" data-edit-key="${esc(key)}">
-      <span class="hierarchy-title"><span class="name">${esc(title)}</span><span class="hierarchy-lock" role="button" tabindex="0" title="${locked ? 'Kilidi aç' : 'Kilitle'}" data-lock-key="${esc(key)}">${locked ? '🔒' : '🔓'}</span></span>
+    <button class="hierarchy-item ${child ? 'child ' : ''}${key === selectedObjectKey ? 'selected ' : ''}${hidden ? 'hidden ' : ''}${locked ? 'locked' : ''}" data-edit-key="${esc(key)}">
+      <span class="hierarchy-title"><span class="name">${esc(title)}</span><span class="hierarchy-actions">${visibility}<span class="hierarchy-lock" role="button" tabindex="0" title="${locked ? 'Kilidi aç' : 'Kilitle'}" data-lock-key="${esc(key)}">${locked ? '🔒' : '🔓'}</span></span></span>
       <small>${esc(small || '')}</small>
     </button>`;
   };
@@ -1003,6 +1070,7 @@ function refreshHierarchy() {
   host.querySelectorAll('[data-edit-key]').forEach(btn => {
     btn.onclick = e => {
       if (e.target.closest('[data-lock-key]')) return;
+      if (e.target.closest('[data-visible-key]')) return;
       setSelectedObject(btn.dataset.editKey, { focus: true });
     };
   });
@@ -1010,6 +1078,12 @@ function refreshHierarchy() {
     btn.onclick = e => { e.stopPropagation(); toggleTargetLock(btn.dataset.lockKey); };
     btn.onkeydown = e => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toggleTargetLock(btn.dataset.lockKey); }
+    };
+  });
+  host.querySelectorAll('[data-visible-key]').forEach(btn => {
+    btn.onclick = e => { e.stopPropagation(); toggleTargetVisibility(btn.dataset.visibleKey); };
+    btn.onkeydown = e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toggleTargetVisibility(btn.dataset.visibleKey); }
     };
   });
 }
@@ -1064,8 +1138,10 @@ function update3DInspector() {
 
   if (target.kind === 'modelMesh') {
     const ownerLabel = target.ownerKind === 'map' ? 'Harita' : 'Makine';
-    title.innerHTML = `<b>◈ ${esc(target.label)}</b><div class="muted">${ownerLabel} model alt-parçası · Model düzenleme aktif</div>`;
+    const hidden = isTargetHidden(target);
+    title.innerHTML = `<b>◈ ${esc(target.label)}</b><div class="muted">${ownerLabel} model alt-parçası · ${hidden ? 'Gizli' : 'Görünür'} · Model düzenleme aktif</div>`;
     host.appendChild(title);
+    inspectorVisibilityRow(host, target);
     ['position', 'rotation', 'scale'].forEach(key => {
       const row = inspectorRow(key.charAt(0).toUpperCase() + key.slice(1));
       const holder = document.createElement('div');
@@ -1080,7 +1156,10 @@ function update3DInspector() {
         inp.oninput = () => {
           const val = Number(inp.value) || 0;
           v3[component] = key === 'rotation' ? degToRad(val) : val;
+          saveModelParts();
           syncRaw();
+          update3DSelection();
+          refreshHierarchy();
         };
         wrap.append(axis, inp);
         holder.appendChild(wrap);
@@ -1115,6 +1194,21 @@ function inspectorLockRow(host, target) {
   const note = document.createElement('div');
   note.className = 'lock-note';
   note.textContent = locked ? 'Kilitli: gizmo ve bu nesnenin düzenleme alanları kapalı.' : 'Kilitlersen gizmo ve bu nesnenin düzenleme alanları kapanır.';
+  row.append(btn, note);
+  host.appendChild(row);
+}
+
+function inspectorVisibilityRow(host, target) {
+  if (!isTargetVisibilityToggleable(target)) return;
+  const hidden = isTargetHidden(target);
+  const row = inspectorRow('Görünürlük');
+  const btn = document.createElement('button');
+  btn.className = 'act small' + (hidden ? '' : ' danger');
+  btn.textContent = hidden ? 'Göster' : 'Gizle';
+  btn.onclick = () => toggleTargetVisibility(target.key);
+  const note = document.createElement('div');
+  note.className = 'lock-note';
+  note.textContent = hidden ? 'Bu mesh runtime config içinde hidden:true olarak saklanır.' : 'Gizlersen mesh editörde ve Godot runtime lobide görünmez.';
   row.append(btn, note);
   host.appendChild(row);
 }
@@ -1248,7 +1342,7 @@ async function boot3DEditor() {
   canvas.addEventListener('pointermove', on3DPointerMove);
   canvas.addEventListener('pointerup', on3DPointerUp);
   canvas.addEventListener('pointerleave', on3DPointerUp);
-  canvas.addEventListener('dblclick', () => focusSelectedMachine());
+  canvas.addEventListener('dblclick', () => focusSelectedObject());
   window.addEventListener('keydown', handle3DShortcuts);
   animate3D();
 }
@@ -1610,7 +1704,39 @@ function update3DSelection() {
     setEditObjectHighlight(map3d.spawnGroup.userData.sphere, selectedObjectKey === SPAWN_POSITION_KEY);
     setEditObjectHighlight(map3d.spawnGroup.userData.lookTarget, selectedObjectKey === SPAWN_LOOK_KEY);
   }
+  updateSelectionBox(selectedTarget);
   attachTransformControl();
+}
+
+function ensureSelectionBox() {
+  if (!map3d.scene || !map3d.THREE) return null;
+  if (!map3d.selectionBox) {
+    map3d.selectionBoxBounds = new map3d.THREE.Box3();
+    map3d.selectionBox = new map3d.THREE.Box3Helper(map3d.selectionBoxBounds, 0xe7b53c);
+    map3d.selectionBox.visible = false;
+    map3d.selectionBox.renderOrder = 999;
+    if (map3d.selectionBox.material) {
+      map3d.selectionBox.material.depthTest = false;
+      map3d.selectionBox.material.transparent = true;
+      map3d.selectionBox.material.opacity = .92;
+    }
+    map3d.scene.add(map3d.selectionBox);
+  }
+  return map3d.selectionBox;
+}
+
+function updateSelectionBox(target = getConfigTarget(selectedObjectKey)) {
+  const helper = ensureSelectionBox();
+  if (!helper) return;
+  const entry = target && map3d.editObjects.get(target.key);
+  const frame = entry && entry.object ? getObjectFrame(entry.object) : null;
+  if (!frame || !frame.box) {
+    helper.visible = false;
+    return;
+  }
+  const pad = Math.max(3, frame.radius * .025);
+  map3d.selectionBoxBounds.copy(frame.box).expandByScalar(pad);
+  helper.visible = true;
 }
 
 function setEditObjectHighlight(object, selected) {
@@ -1646,7 +1772,7 @@ function attachTransformControl() {
   if (!map3d.transformControls || !config) return;
   const target = getConfigTarget(selectedObjectKey);
   const entry = target && map3d.editObjects.get(target.key);
-  if (!target || !entry || isTargetLocked(target) || !targetSupportsMode(target, map3d.transformMode)) {
+  if (!target || !entry || isTargetLocked(target) || isTargetHidden(target) || !targetSupportsMode(target, map3d.transformMode)) {
     map3d.transformControls.detach();
     return;
   }
@@ -1699,6 +1825,7 @@ function onTransformObjectChange() {
     updateSpawn3D();
   }
   syncRaw();
+  updateSelectionBox(target);
   update3DInspector();
   refreshMachinePicker();
   refreshHierarchy();
@@ -1751,7 +1878,7 @@ function handle3DShortcuts(e) {
   if (e.key === 'w' || e.key === 'W') { setTransformMode('translate'); e.preventDefault(); }
   if (e.key === 'e' || e.key === 'E') { setTransformMode('rotate'); e.preventDefault(); }
   if (e.key === 'r' || e.key === 'R') { setTransformMode('scale'); e.preventDefault(); }
-  if (e.key === 'f' || e.key === 'F') { focusSelectedMachine(); e.preventDefault(); }
+  if (e.key === 'f' || e.key === 'F') { focusSelectedObject(); e.preventDefault(); }
   if (!modelEditMode) {
     if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelectedMachine(); e.preventDefault(); }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) { duplicateSelectedMachine(); e.preventDefault(); }
@@ -1760,47 +1887,76 @@ function handle3DShortcuts(e) {
 
 function reset3DCamera(useSelection = true) {
   if (!map3d.camera || !map3d.controls) return;
-  const target = getFocusPoint(useSelection);
-  map3d.controls.target.copy(target);
-  map3d.camera.position.set(target.x + 760, target.y + 520, target.z + 760);
-  map3d.camera.lookAt(target);
-  map3d.controls.update();
+  setCameraFrame(getFocusFrame(useSelection), 1.9);
 }
 
 function focusSelectedMachine() {
+  focusSelectedObject();
+}
+
+function focusSelectedObject() {
   if (!map3d.controls || !map3d.camera) return;
-  const target = getFocusPoint(true);
-  const delta = new map3d.THREE.Vector3(430, 310, 430);
-  map3d.controls.target.copy(target);
-  map3d.camera.position.copy(target).add(delta);
-  map3d.camera.lookAt(target);
+  setCameraFrame(getFocusFrame(true), 1.35);
+}
+
+function setCameraFrame(frame, margin = 1.45) {
+  if (!frame || !map3d.controls || !map3d.camera || !map3d.THREE) return;
+  const THREE = map3d.THREE;
+  const direction = new THREE.Vector3().subVectors(map3d.camera.position, map3d.controls.target);
+  if (!Number.isFinite(direction.lengthSq()) || direction.lengthSq() < 1) direction.set(1, .72, 1);
+  direction.normalize();
+  const fov = degToRad(map3d.camera.fov || 52);
+  const distance = Math.max(120, (frame.radius / Math.sin(Math.max(0.2, fov / 2))) * margin);
+  map3d.controls.target.copy(frame.target);
+  map3d.camera.position.copy(frame.target).add(direction.multiplyScalar(distance));
+  map3d.camera.near = 1;
+  map3d.camera.far = Math.max(20000, distance * 8);
+  map3d.camera.updateProjectionMatrix();
+  map3d.camera.lookAt(frame.target);
   map3d.controls.update();
 }
 
-function getFocusPoint(useSelection) {
+function getFocusFrame(useSelection) {
   const THREE = map3d.THREE;
   if (useSelection && config) {
     const target = getConfigTarget(selectedObjectKey);
-    if (target && target.kind === 'machine') {
-      const p = ensureVec(target.object, 'position', 3);
-      return new THREE.Vector3(p[0], p[1] + 70, p[2]);
-    }
     const entry = target && map3d.editObjects.get(target.key);
-    if (entry && entry.object) {
-      const point = new THREE.Vector3();
-      entry.object.getWorldPosition(point);
-      return point;
-    }
+    const objectFrame = entry && entry.object ? getObjectFrame(entry.object) : null;
+    if (objectFrame) return objectFrame;
     if (target && target.positionKey) {
       const p = ensureVec(target.object, target.positionKey, 3);
-      return new THREE.Vector3(p[0], p[1] + 40, p[2]);
+      return frameFromPoint(new THREE.Vector3(p[0], p[1] + 40, p[2]), 90);
     }
   }
   if (config && config.spawn) {
     const p = ensureVec(config.spawn, 'position', 3);
-    return new THREE.Vector3(p[0], p[1] + 70, p[2]);
+    return frameFromPoint(new THREE.Vector3(p[0], p[1] + 70, p[2]), 140);
   }
-  return new THREE.Vector3(0, getGroundY() + 70, 0);
+  return frameFromPoint(new THREE.Vector3(0, getGroundY() + 70, 0), 180);
+}
+
+function frameFromPoint(point, radius) {
+  const THREE = map3d.THREE;
+  const box = new THREE.Box3().setFromCenterAndSize(point, new THREE.Vector3(radius, radius, radius));
+  return { target: point, radius, box };
+}
+
+function getObjectFrame(object) {
+  if (!object || !map3d.THREE) return null;
+  const THREE = map3d.THREE;
+  object.updateWorldMatrix(true, true);
+  const box = new THREE.Box3().setFromObject(object);
+  const valid = Number.isFinite(box.min.x) && Number.isFinite(box.min.y) && Number.isFinite(box.min.z)
+    && Number.isFinite(box.max.x) && Number.isFinite(box.max.y) && Number.isFinite(box.max.z)
+    && !box.isEmpty();
+  if (valid) {
+    const sphere = new THREE.Sphere();
+    box.getBoundingSphere(sphere);
+    if (Number.isFinite(sphere.radius) && sphere.radius > 0) return { target: sphere.center, radius: Math.max(35, sphere.radius), box };
+  }
+  const point = new THREE.Vector3();
+  object.getWorldPosition(point);
+  return frameFromPoint(point, 90);
 }
 
 function getGroundY() {
@@ -1816,7 +1972,7 @@ function on3DPointerDown(e) {
   if (!map3d.camera || !config) return;
   const hit = pickEditableObject(e);
   if (!hit) return;
-  setSelectedObject(hit.key);
+  setSelectedObject(hit.key, { focus: modelEditMode && hit.key !== selectedObjectKey });
   if (isTargetLocked(hit.key)) return;
   if (map3d.transformControls) return;
   const point = intersectGround(e);
@@ -1910,7 +2066,7 @@ $('#map3dMachineSelect').onchange = e => setSelectedMachine(Number(e.target.valu
 document.querySelectorAll('[data-map3d-tool]').forEach(btn => {
   btn.onclick = () => setTransformMode(btn.dataset.map3dTool);
 });
-$('#map3dFocus').onclick = () => focusSelectedMachine();
+$('#map3dFocus').onclick = () => focusSelectedObject();
 $('#map3dResetCamera').onclick = () => reset3DCamera();
 $('#map3dDuplicate').onclick = () => duplicateSelectedMachine();
 $('#map3dDelete').onclick = () => deleteSelectedMachine();

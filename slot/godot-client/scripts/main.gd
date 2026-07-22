@@ -960,6 +960,10 @@ func _apply_model_parts_recursive(node: Node, parts: Dictionary) -> void:
                 node_3d.rotation_degrees = _to_vector3(part.get("rotation", []), node_3d.rotation_degrees)
             if part.has("scale"):
                 node_3d.scale = _to_vector3(part.get("scale", []), node_3d.scale)
+            if part.has("hidden"):
+                node_3d.visible = not bool(part.get("hidden"))
+            elif part.has("visible"):
+                node_3d.visible = bool(part.get("visible"))
 
     for child in node.get_children():
         _apply_model_parts_recursive(child, parts)
