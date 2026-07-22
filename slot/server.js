@@ -35,6 +35,8 @@ const CLIENT_SHELL_COOKIE = 'casinoClientShell';
 const AUTH_COOKIE = 'casinoAuth';
 const AUTH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const AUTO_MAINTENANCE_STUCK_ROUND_MS = Math.max(30_000, Number(process.env.AUTO_MAINTENANCE_STUCK_ROUND_MS) || 120_000);
+const AUTO_MAINTENANCE_MAX_SUGAR_FS_AWARD = Math.max(40, Number(process.env.AUTO_MAINTENANCE_MAX_SUGAR_FS_AWARD) || 100);
+const AUTO_MAINTENANCE_MAX_SUGAR_FS_TRIGGERS = Math.max(5, Number(process.env.AUTO_MAINTENANCE_MAX_SUGAR_FS_TRIGGERS) || 25);
 const clientGameSessions = new Map(); // token -> { game, sessionID, expiresAt, lastAccess }
 const clientShellSessions = new Map(); // token -> { sessionID, expiresAt, lastAccess }
 const authSessions = new Map(); // token -> { playerId, expiresAt, lastAccess }
@@ -262,6 +264,10 @@ function maintenanceView() {
     details: maintenanceState.details || null,
     triggeredAt: maintenanceState.triggeredAt,
     stuckRoundMs: AUTO_MAINTENANCE_STUCK_ROUND_MS,
+    freeSpinLimits: {
+      maxTotalAward: AUTO_MAINTENANCE_MAX_SUGAR_FS_AWARD,
+      maxTriggers: AUTO_MAINTENANCE_MAX_SUGAR_FS_TRIGGERS,
+    },
   };
 }
 
@@ -738,6 +744,53 @@ function isUsableSugarBook(book) {
   });
 }
 
+function sugarFreeSpinStats(events) {
+  const stats = {
+    triggerCount: 0,
+    totalAwarded: 0,
+    maxSingleAward: 0,
+    maxUpdateTotal: 0,
+    freeGameReveals: 0,
+  };
+
+  for (const event of Array.isArray(events) ? events : []) {
+    if (!event) continue;
+    if (event.type === 'fsTrigger') {
+      const spins = Number(event.totalSpins);
+      stats.triggerCount++;
+      if (Number.isFinite(spins)) {
+        stats.totalAwarded += spins;
+        stats.maxSingleAward = Math.max(stats.maxSingleAward, spins);
+      }
+    }
+    if (event.type === 'updateFreespin') {
+      const total = Number(event.totalSpins);
+      if (Number.isFinite(total)) stats.maxUpdateTotal = Math.max(stats.maxUpdateTotal, total);
+    }
+    if (event.type === 'reveal' && event.gameType === 'freegame') {
+      stats.freeGameReveals++;
+    }
+  }
+
+  return stats;
+}
+
+function excessiveSugarFreeSpins(book) {
+  const stats = sugarFreeSpinStats(book && book.events);
+  const maxObservedTotal = Math.max(stats.totalAwarded, stats.maxUpdateTotal, stats.freeGameReveals);
+  const excessive = stats.triggerCount > AUTO_MAINTENANCE_MAX_SUGAR_FS_TRIGGERS
+    || maxObservedTotal > AUTO_MAINTENANCE_MAX_SUGAR_FS_AWARD;
+
+  return {
+    excessive,
+    stats,
+    limits: {
+      maxTotalAward: AUTO_MAINTENANCE_MAX_SUGAR_FS_AWARD,
+      maxTriggers: AUTO_MAINTENANCE_MAX_SUGAR_FS_TRIGGERS,
+    },
+  };
+}
+
 function getWalletSession(sessionID = DEFAULT_SESSION_ID) {
   if (!walletSessions.has(sessionID)) {
     const registered = getRegisteredPlayer(sessionID);
@@ -873,6 +926,17 @@ function handleWalletRoute(url, req, res) {
 
         const betDisplayAmount = amount / PRECISION;
         const book = pickSugarBook(mode);
+        const fsGuard = excessiveSugarFreeSpins(book);
+        if (fsGuard.excessive) {
+          enterMaintenance('excessive-free-spins', {
+            sessionID,
+            mode,
+            bookId: book.id,
+            ...fsGuard,
+          });
+          return maintenanceJson(res);
+        }
+
         const events = book.events.map(event => scaleSugarEvent(event, betDisplayAmount));
         const finalWinDisplay = getFinalWin(events);
         const winAmount = Math.round(finalWinDisplay * PRECISION);
