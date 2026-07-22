@@ -4,7 +4,8 @@
 
 | Component | Path | Start command |
 |-----------|------|---------------|
-| **Slot server** (admin, slot game, cloud streaming, balances) | `slot/server.js` | `cd slot && node server.js` |
+| **Slot server** (lobby, admin, slot game, cloud streaming, balances) | `slot/server.js` | `cd slot && node server.js` |
+| **Web lobby** (`casino.retailerway.com/`) | `slot/lobby.html` | Served by slot server at `/` — responsive game selector with iframe embedding |
 | **Game server** (poker, blackjack, chip ledger) | `server/index.js` | `cd server && node index.js` |
 | **Production (root Dockerfile)** | `/Dockerfile` | Symlinks `slot/` into `server/slot` and `sugar-rush-clone/frontend/dist` into `server/sugar-rush`, runs `server/index.js` on port 3001 |
 

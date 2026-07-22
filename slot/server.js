@@ -373,36 +373,34 @@ const server = http.createServer((req, res) => {
     return res.end(content);
   }
 
-  // Full streaming: external clients only ever see the /cloud/* stream.
-  // Everything else (game code, models, maps, audio, config) is reserved for
-  // the internal headless browser that renders the stream.
-  const internalGameRequest = isInternalGameRequest(req);
+  // Serve lobby at root for all clients
+  if (url === '/' || url === '/lobby' || url === '/lobby/') {
+    return serveStatic(SLOT_DIR, 'lobby.html', res, { 'Cache-Control': 'no-cache' });
+  }
 
-  if (!internalGameRequest) {
+  // Game routes: serve directly to all clients (no cloud redirect)
+  // Cloud streaming remains available at /cloud/* for legacy clients
+  if (url === '/sugar-rush' || url === '/sugar-rush/' || url.startsWith('/sugar-rush/')) {
+    if (url === '/sugar-rush') {
+      const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+      res.writeHead(302, { Location: `/sugar-rush/${query}` });
+      return res.end();
+    }
+    if (url === '/sugar-rush/') {
+      return serveStatic(SUGAR_RUSH_DIR, 'index.html', res);
+    }
+    return serveStatic(SUGAR_RUSH_DIR, url.slice('/sugar-rush/'.length), res);
+  }
+
+  // Block non-lobby, non-game routes for external clients
+  if (!isInternalGameRequest(req)) {
     if (isSlotEntryUrl(url)) {
       return redirectToCloud(res, 'slot');
-    }
-    if (url === '/sugar-rush' || url === '/sugar-rush/') {
-      return redirectToCloud(res, 'sugar-rush');
     }
     if (!isLobbyAsset(url)) {
       res.writeHead(403, { 'Cache-Control': 'no-store' });
       return res.end('Forbidden');
     }
-  }
-
-  if (url === '/sugar-rush') {
-    const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-    res.writeHead(302, { Location: `/sugar-rush/${query}` });
-    return res.end();
-  }
-
-  if (url === '/sugar-rush/') {
-    return serveStatic(SUGAR_RUSH_DIR, 'index.html', res);
-  }
-
-  if (url.startsWith('/sugar-rush/')) {
-    return serveStatic(SUGAR_RUSH_DIR, url.slice('/sugar-rush/'.length), res);
   }
 
   if (url === '/casino-config.json') {
