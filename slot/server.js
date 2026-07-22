@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const rng = (() => { try { return require('../server/rng'); } catch (e) { return require('./rng'); } })();
 const { handleCloudStreamRoute, isInternalGameRequest, listCloudSessions } = require('./cloud-stream');
-const { handleAdminRoute, persistBalance, getRegisteredPlayer, registerPublicPlayer, getConfigFilePath, resolveAssetFile } = require('./admin');
+const { handleAdminRoute, persistBalance, getRegisteredPlayer, registerPublicPlayer, registerAccount, authenticatePublicPlayer, playerView, getConfigFilePath, resolveAssetFile } = require('./admin');
 
 const PORT = Number(process.env.PORT) || 3001;
 const SLOT_DIR = __dirname;
@@ -32,8 +32,11 @@ const CLIENT_SHELL_TTL_MS = 24 * 60 * 60 * 1000;
 const CLIENT_RENDER_SECRET = process.env.CLIENT_RENDER_SECRET || '';
 const CLIENT_GAME_COOKIE = 'casinoClientGame';
 const CLIENT_SHELL_COOKIE = 'casinoClientShell';
+const AUTH_COOKIE = 'casinoAuth';
+const AUTH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const clientGameSessions = new Map(); // token -> { game, sessionID, expiresAt, lastAccess }
 const clientShellSessions = new Map(); // token -> { sessionID, expiresAt, lastAccess }
+const authSessions = new Map(); // token -> { playerId, expiresAt, lastAccess }
 
 // ── HTTP server ──
 
@@ -134,6 +137,13 @@ function pruneClientShellSessions() {
   }
 }
 
+function pruneAuthSessions() {
+  const now = Date.now();
+  for (const [token, session] of authSessions) {
+    if (!session || session.expiresAt <= now) authSessions.delete(token);
+  }
+}
+
 function setSessionCookie(req, res, name, token, ttlMs) {
   const secure = requestBaseUrl(req).startsWith('https://') ? '; Secure' : '';
   res.setHeader('Set-Cookie', `${name}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(ttlMs / 1000)}${secure}`);
@@ -164,6 +174,18 @@ function createClientShellSession(sessionID) {
   return { token, session };
 }
 
+function createAuthSession(playerId) {
+  pruneAuthSessions();
+  const token = crypto.randomBytes(32).toString('base64url');
+  const session = {
+    playerId: normalizeSessionID(playerId),
+    expiresAt: Date.now() + AUTH_TTL_MS,
+    lastAccess: Date.now(),
+  };
+  authSessions.set(token, session);
+  return { token, session };
+}
+
 function getClientGameSession(req) {
   pruneClientGameSessions();
   const token = parseCookies(req)[CLIENT_GAME_COOKIE];
@@ -190,12 +212,40 @@ function getClientShellSession(req) {
   return session;
 }
 
+function getAuthSession(req) {
+  pruneAuthSessions();
+  const token = parseCookies(req)[AUTH_COOKIE];
+  if (!token) return null;
+  const session = authSessions.get(token);
+  if (!session || session.expiresAt <= Date.now()) {
+    authSessions.delete(token);
+    return null;
+  }
+  session.lastAccess = Date.now();
+  return session;
+}
+
+function getAuthPlayer(req) {
+  const session = getAuthSession(req);
+  if (!session) return null;
+  return playerView(session.playerId);
+}
+
 function setClientGameCookie(req, res, token) {
   setSessionCookie(req, res, CLIENT_GAME_COOKIE, token, CLIENT_GAME_TTL_MS);
 }
 
 function setClientShellCookie(req, res, token) {
   setSessionCookie(req, res, CLIENT_SHELL_COOKIE, token, CLIENT_SHELL_TTL_MS);
+}
+
+function setAuthCookie(req, res, token) {
+  setSessionCookie(req, res, AUTH_COOKIE, token, AUTH_TTL_MS);
+}
+
+function clearAuthCookie(req, res) {
+  const secure = requestBaseUrl(req).startsWith('https://') ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `${AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`);
 }
 
 function providedClientSecret(req, requestUrl) {
@@ -505,7 +555,23 @@ function readJson(req, cb) {
 }
 
 function handlePublicApiRoute(url, req, res) {
-  if (url !== '/api/register') return false;
+  const routes = new Set(['/api/register', '/api/login', '/api/logout', '/api/session']);
+  if (!routes.has(url)) return false;
+
+  if (url === '/api/session' && req.method === 'GET') {
+    const player = getAuthPlayer(req);
+    if (!player) json(res, 200, { ok: true, authenticated: false });
+    else json(res, 200, { ok: true, authenticated: true, player: { ...player, balance: displayBalance(player.id) } });
+    return true;
+  }
+
+  if (url === '/api/logout' && req.method === 'POST') {
+    const token = parseCookies(req)[AUTH_COOKIE];
+    if (token) authSessions.delete(token);
+    clearAuthCookie(req, res);
+    json(res, 200, { ok: true });
+    return true;
+  }
 
   if (req.method !== 'POST') {
     json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -515,9 +581,28 @@ function handlePublicApiRoute(url, req, res) {
   readJson(req, (err, body) => {
     if (err) return json(res, 400, { ok: false, error: 'Invalid JSON' });
 
-    const player = registerPublicPlayer(body);
-    adjustDisplayBalance(player.id, player.balance - displayBalance(player.id));
-    json(res, 200, { ok: true, ...player });
+    try {
+      if (url === '/api/login') {
+        const player = authenticatePublicPlayer(body.identifier || body.login || body.email || body.username, body.password);
+        if (!player) return json(res, 401, { ok: false, error: 'Email/kullanici adi veya sifre hatali' });
+        const { token } = createAuthSession(player.id);
+        setAuthCookie(req, res, token);
+        adjustDisplayBalance(player.id, player.balance - displayBalance(player.id));
+        return json(res, 200, { ok: true, player: { ...player, balance: displayBalance(player.id) } });
+      }
+
+      const accountRegister = body.password != null || body.email != null || body.username != null;
+      const player = accountRegister ? registerAccount(body) : registerPublicPlayer(body);
+      adjustDisplayBalance(player.id, player.balance - displayBalance(player.id));
+      if (accountRegister) {
+        const { token } = createAuthSession(player.id);
+        setAuthCookie(req, res, token);
+        return json(res, 200, { ok: true, player: { ...player, balance: displayBalance(player.id) } });
+      }
+      return json(res, 200, { ok: true, ...player });
+    } catch (e) {
+      return json(res, e.statusCode || 500, { ok: false, error: e.message });
+    }
   });
 
   return true;

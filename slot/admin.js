@@ -109,6 +109,54 @@ function normalizePlayerID(value) {
   return String(value || '').replace(/[^a-zA-Z0-9_.:-]/g, '').slice(0, 128);
 }
 
+function normalizeUsername(value) {
+  return normalizePlayerID(String(value || '').trim().toLowerCase()).slice(0, 48);
+}
+
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase().slice(0, 254);
+}
+
+function publicError(message, statusCode = 400) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  return err;
+}
+
+function isValidEmail(email) {
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
+}
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('base64url');
+  const hash = crypto.scryptSync(String(password), salt, 64).toString('base64url');
+  return { passwordKdf: 'scrypt', passwordSalt: salt, passwordHash: hash };
+}
+
+function verifyPassword(player, password) {
+  if (!player || !player.passwordHash || !player.passwordSalt) return false;
+  const expected = Buffer.from(player.passwordHash, 'base64url');
+  const actual = crypto.scryptSync(String(password), player.passwordSalt, expected.length);
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+}
+
+function findPlayerByEmail(email) {
+  return Object.entries(players).find(([, p]) => normalizeEmail(p.email || p.emailLower) === email) || null;
+}
+
+function playerView(id, player = players[id]) {
+  if (!player) return null;
+  return {
+    id,
+    username: player.username || id,
+    email: player.email || '',
+    name: player.name || player.username || id,
+    balance: Number(player.balance) || DEFAULT_PLAYER_BALANCE,
+    createdAt: player.createdAt,
+    updatedAt: player.updatedAt,
+  };
+}
+
 function getRegisteredPlayer(sessionID) {
   return players[sessionID] || null;
 }
@@ -137,6 +185,42 @@ function registerPublicPlayer(body = {}) {
     balance: Number(players[id].balance) || DEFAULT_PLAYER_BALANCE,
     created,
   };
+}
+
+function registerAccount(body = {}) {
+  const username = normalizeUsername(body.username || body.id);
+  const email = normalizeEmail(body.email);
+  const password = String(body.password || '');
+  const now = new Date().toISOString();
+
+  if (!username || username.length < 3) throw publicError('Kullanici adi en az 3 karakter olmali');
+  if (!isValidEmail(email)) throw publicError('Gecerli bir email girin');
+  if (password.length < 6) throw publicError('Sifre en az 6 karakter olmali');
+  if (players[username]) throw publicError('Bu kullanici adi zaten kayitli', 409);
+  if (findPlayerByEmail(email)) throw publicError('Bu email zaten kayitli', 409);
+
+  players[username] = {
+    username,
+    email,
+    emailLower: email,
+    name: String(body.name || username).trim().slice(0, 64) || username,
+    balance: DEFAULT_PLAYER_BALANCE,
+    createdAt: now,
+    updatedAt: now,
+    ...hashPassword(password),
+  };
+  schedulePersist();
+  return playerView(username);
+}
+
+function authenticatePublicPlayer(identifier, password) {
+  const raw = String(identifier || '').trim();
+  if (!raw || !password) return null;
+  const email = normalizeEmail(raw);
+  const username = normalizeUsername(raw);
+  const match = raw.includes('@') ? findPlayerByEmail(email) : [username, players[username]];
+  if (!match || !match[1]) return null;
+  return verifyPassword(match[1], password) ? playerView(match[0], match[1]) : null;
 }
 
 // Oyun sunucusu bakiye degistikce cagirir; kayitli oyuncularin bakiyesi kalici olur.
@@ -517,4 +601,4 @@ function handleAdminRoute(req, res, ctx) {
   return true;
 }
 
-module.exports = { handleAdminRoute, getRegisteredPlayer, persistBalance, registerPublicPlayer, getConfigFilePath: ensureConfigFile, resolveAssetFile };
+module.exports = { handleAdminRoute, getRegisteredPlayer, persistBalance, registerPublicPlayer, registerAccount, authenticatePublicPlayer, playerView, getConfigFilePath: ensureConfigFile, resolveAssetFile };
