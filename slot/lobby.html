@@ -120,6 +120,24 @@
   #game-frame {
     flex: 1; width: 100%; border: none;
   }
+  #game-frame.maintenance { display: none; }
+  #maintenance-panel {
+    flex: 1; display: none; align-items: center; justify-content: center;
+    padding: 24px; background: radial-gradient(circle at 50% 0%, #2b174d, #07040f 70%);
+  }
+  #maintenance-panel.show { display: flex; }
+  .maintenance-card {
+    width: min(540px, 92vw); text-align: center; border: 1px solid rgba(255,255,255,.16);
+    border-radius: 22px; background: rgba(12, 7, 28, .9); box-shadow: 0 24px 80px rgba(0,0,0,.45);
+    padding: 28px;
+  }
+  .maintenance-card .badge { display: inline-block; border: 1px solid rgba(231,181,60,.35); border-radius: 999px;
+    color: var(--gold); padding: 5px 12px; font-size: 12px; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+  .maintenance-card h2 { margin: 16px 0 8px; font-size: 26px; }
+  .maintenance-card p { color: var(--dim); margin: 8px 0; }
+  .maintenance-card .reason { margin-top: 14px; color: #ff9cac; font-size: 13px; }
+  .maintenance-card button { margin-top: 18px; background: rgba(255,255,255,.08); color: #fff; border: 1px solid rgba(255,255,255,.12);
+    border-radius: 10px; padding: 10px 14px; font-weight: 800; cursor: pointer; }
 
   /* ── loading ── */
   #loading {
@@ -201,6 +219,16 @@
     <span class="gbalance" id="gameBalance">-</span>
   </div>
   <iframe id="game-frame" allow="autoplay; fullscreen" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+  <div id="maintenance-panel">
+    <div class="maintenance-card">
+      <span class="badge">Bakım Modu</span>
+      <h2>Oyun geçici olarak durduruldu</h2>
+      <p>Bir takılma veya teknik sorun algılandı. Oyuncuları korumak için oyun otomatik olarak bakım moduna alındı.</p>
+      <p>Lütfen biraz sonra tekrar deneyin.</p>
+      <div class="reason" id="maintenanceReason">-</div>
+      <button type="button" id="maintenanceBack">Lobiye Dön</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -228,6 +256,7 @@ const GAMES = [
 let sessionID = null;
 let ws = null;
 let currentPlayer = null;
+let maintenanceTimer = null;
 
 function setAuthMode(mode) {
   const login = mode === 'login';
@@ -270,6 +299,46 @@ async function apiJson(url, payload) {
   return data;
 }
 
+async function fetchMaintenance() {
+  const res = await fetch('/api/maintenance', { cache: 'no-store', credentials: 'same-origin' });
+  const data = await res.json().catch(() => ({ ok: false }));
+  return data.maintenance || { active: false };
+}
+
+function showMaintenance(maintenance) {
+  const layer = document.getElementById('game-layer');
+  const frame = document.getElementById('game-frame');
+  const panel = document.getElementById('maintenance-panel');
+  const reason = document.getElementById('maintenanceReason');
+  frame.src = 'about:blank';
+  frame.classList.add('maintenance');
+  panel.classList.add('show');
+  reason.textContent = 'Sebep: ' + (maintenance.reason || 'otomatik kontrol');
+  layer.classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function hideMaintenance() {
+  document.getElementById('game-frame').classList.remove('maintenance');
+  document.getElementById('maintenance-panel').classList.remove('show');
+}
+
+function startMaintenanceWatch() {
+  if (maintenanceTimer) clearInterval(maintenanceTimer);
+  maintenanceTimer = setInterval(async () => {
+    if (!document.getElementById('game-layer').classList.contains('open')) return;
+    try {
+      const maintenance = await fetchMaintenance();
+      if (maintenance.active) showMaintenance(maintenance);
+    } catch (_) {}
+  }, 5000);
+}
+
+function stopMaintenanceWatch() {
+  if (maintenanceTimer) clearInterval(maintenanceTimer);
+  maintenanceTimer = null;
+}
+
 async function loadSession() {
   const res = await fetch('/api/session', { credentials: 'same-origin' });
   const data = await res.json().catch(() => ({ ok: false }));
@@ -302,6 +371,9 @@ function connectWS() {
       if (msg.type === 'connected' || msg.type === 'balance') {
         fetchBalance();
       }
+      if (msg.type === 'maintenance:updated' && msg.maintenance && msg.maintenance.active) {
+        showMaintenance(msg.maintenance);
+      }
     } catch (_) {}
   });
   ws.addEventListener('close', () => { if (sessionID) setTimeout(connectWS, 3000); });
@@ -332,16 +404,25 @@ function renderGames() {
   });
 }
 
-function openGame(game) {
+async function openGame(game) {
   if (!sessionID) {
     showAuth('Oynamak için önce giriş yapın.');
     return;
   }
+  const maintenance = await fetchMaintenance().catch(() => ({ active: false }));
+  if (maintenance.active) {
+    document.getElementById('gameTitle').textContent = game.name;
+    showMaintenance(maintenance);
+    startMaintenanceWatch();
+    return;
+  }
+
   const layer = document.getElementById('game-layer');
   const frame = document.getElementById('game-frame');
   const title = document.getElementById('gameTitle');
 
   title.textContent = game.name;
+  hideMaintenance();
 
   let url = game.launch;
   if (game.id === 'sugar-rush') {
@@ -351,6 +432,7 @@ function openGame(game) {
   frame.src = url;
   layer.classList.add('open');
   document.body.style.overflow = 'hidden';
+  startMaintenanceWatch();
   fetchBalance();
 }
 
@@ -359,10 +441,13 @@ function closeGame() {
   const frame = document.getElementById('game-frame');
   layer.classList.remove('open');
   frame.src = '';
+  hideMaintenance();
+  stopMaintenanceWatch();
   document.body.style.overflow = '';
 }
 
 document.getElementById('backBtn').addEventListener('click', closeGame);
+document.getElementById('maintenanceBack').addEventListener('click', closeGame);
 document.getElementById('showLogin').addEventListener('click', () => setAuthMode('login'));
 document.getElementById('showRegister').addEventListener('click', () => setAuthMode('register'));
 

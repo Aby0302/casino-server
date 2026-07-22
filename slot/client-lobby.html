@@ -356,6 +356,31 @@
       background: #000;
     }
 
+    iframe.maintenance { display: none; }
+
+    .maintenance-panel {
+      display: none;
+      place-items: center;
+      padding: 24px;
+      background: radial-gradient(circle at 50% 0%, rgba(255, 61, 129, 0.24), transparent 34%), #050508;
+    }
+
+    .maintenance-panel.show { display: grid; }
+
+    .maintenance-card {
+      width: min(520px, 92vw);
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      background: rgba(20, 19, 38, 0.92);
+      box-shadow: 0 24px 80px rgba(0,0,0,0.42);
+      padding: 26px;
+      text-align: center;
+    }
+
+    .maintenance-card h2 { margin: 12px 0 8px; }
+    .maintenance-card p { color: var(--muted); line-height: 1.55; }
+    .maintenance-card .reason { color: #ff9cac; font-weight: 800; font-size: 13px; }
+
     @media (max-width: 780px) {
       .app { overflow: auto; }
       .topbar, .main { grid-template-columns: 1fr; }
@@ -409,6 +434,14 @@
       <button class="secondary" id="close-game" type="button">Back to lobby</button>
     </div>
     <iframe id="game-frame" title="Casino game" allow="autoplay; fullscreen; gamepad"></iframe>
+    <div class="maintenance-panel" id="maintenance-panel">
+      <div class="maintenance-card">
+        <div class="eyebrow">Maintenance Mode</div>
+        <h2>Game temporarily paused</h2>
+        <p>A stuck round or technical issue was detected. The game was automatically paused to protect players.</p>
+        <p class="reason" id="maintenance-reason">Reason: automatic check</p>
+      </div>
+    </div>
   </section>
 
   <script src="/client/lobby/client-lobby.js"></script>

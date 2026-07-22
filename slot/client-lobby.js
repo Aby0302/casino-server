@@ -6,6 +6,7 @@
     balance: null,
     socket: null,
     socketTimer: null,
+    maintenanceTimer: null,
     config: null,
   }
 
@@ -24,6 +25,8 @@
     gameFrame: document.getElementById('game-frame'),
     gameTitle: document.getElementById('game-title'),
     closeGame: document.getElementById('close-game'),
+    maintenancePanel: document.getElementById('maintenance-panel'),
+    maintenanceReason: document.getElementById('maintenance-reason'),
   }
 
   function setMessage(text) {
@@ -50,6 +53,40 @@
     const response = await fetch(url, Object.assign({ cache: 'no-store' }, options || {}))
     if (!response.ok) throw new Error(url + ' failed with HTTP ' + response.status)
     return response.json()
+  }
+
+  async function fetchMaintenance() {
+    const data = await fetchJson('/api/maintenance')
+    return data.maintenance || { active: false }
+  }
+
+  function showMaintenance(maintenance) {
+    els.gameFrame.src = 'about:blank'
+    els.gameFrame.classList.add('maintenance')
+    els.maintenancePanel.classList.add('show')
+    els.maintenanceReason.textContent = 'Reason: ' + ((maintenance && maintenance.reason) || 'automatic check')
+    els.gameLayer.classList.add('active')
+  }
+
+  function hideMaintenance() {
+    els.gameFrame.classList.remove('maintenance')
+    els.maintenancePanel.classList.remove('show')
+  }
+
+  function startMaintenanceWatch() {
+    if (state.maintenanceTimer) clearInterval(state.maintenanceTimer)
+    state.maintenanceTimer = setInterval(async () => {
+      if (!els.gameLayer.classList.contains('active')) return
+      try {
+        const maintenance = await fetchMaintenance()
+        if (maintenance.active) showMaintenance(maintenance)
+      } catch (_) {}
+    }, 5000)
+  }
+
+  function stopMaintenanceWatch() {
+    if (state.maintenanceTimer) clearInterval(state.maintenanceTimer)
+    state.maintenanceTimer = null
   }
 
   async function loadSession() {
@@ -123,20 +160,32 @@
     }
   }
 
-  function openGame(machine) {
+  async function openGame(machine) {
     const game = String(machine.game || 'sugar-rush')
     if (game !== 'sugar-rush') {
       setMessage('This game is not enabled for the web lobby yet.')
       return
     }
 
+    const maintenance = await fetchMaintenance().catch(() => ({ active: false }))
+    if (maintenance.active) {
+      els.gameTitle.textContent = machineTitle(machine)
+      showMaintenance(maintenance)
+      startMaintenanceWatch()
+      return
+    }
+
     els.gameTitle.textContent = machineTitle(machine)
     els.gameLayer.classList.add('active')
+    hideMaintenance()
     els.gameFrame.src = '/client/start?game=' + encodeURIComponent(game) + '&sessionID=' + encodeURIComponent(state.sessionID)
+    startMaintenanceWatch()
   }
 
   function closeGame() {
     els.gameFrame.src = 'about:blank'
+    hideMaintenance()
+    stopMaintenanceWatch()
     els.gameLayer.classList.remove('active')
   }
 
@@ -167,6 +216,9 @@
       }
       if (payload && payload.type === 'config:updated') {
         loadConfig().catch(error => setMessage(error.message))
+      }
+      if (payload && payload.type === 'maintenance:updated' && payload.maintenance && payload.maintenance.active) {
+        showMaintenance(payload.maintenance)
       }
     })
 

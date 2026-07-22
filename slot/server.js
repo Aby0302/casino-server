@@ -34,9 +34,16 @@ const CLIENT_GAME_COOKIE = 'casinoClientGame';
 const CLIENT_SHELL_COOKIE = 'casinoClientShell';
 const AUTH_COOKIE = 'casinoAuth';
 const AUTH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const AUTO_MAINTENANCE_STUCK_ROUND_MS = Math.max(30_000, Number(process.env.AUTO_MAINTENANCE_STUCK_ROUND_MS) || 120_000);
 const clientGameSessions = new Map(); // token -> { game, sessionID, expiresAt, lastAccess }
 const clientShellSessions = new Map(); // token -> { sessionID, expiresAt, lastAccess }
 const authSessions = new Map(); // token -> { playerId, expiresAt, lastAccess }
+const maintenanceState = {
+  active: false,
+  reason: '',
+  details: null,
+  triggeredAt: null,
+};
 
 // ── HTTP server ──
 
@@ -248,6 +255,63 @@ function clearAuthCookie(req, res) {
   res.setHeader('Set-Cookie', `${AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`);
 }
 
+function maintenanceView() {
+  return {
+    active: maintenanceState.active,
+    reason: maintenanceState.reason || '',
+    details: maintenanceState.details || null,
+    triggeredAt: maintenanceState.triggeredAt,
+    stuckRoundMs: AUTO_MAINTENANCE_STUCK_ROUND_MS,
+  };
+}
+
+function enterMaintenance(reason, details = null) {
+  if (maintenanceState.active) return maintenanceView();
+  maintenanceState.active = true;
+  maintenanceState.reason = String(reason || 'unknown').slice(0, 120);
+  maintenanceState.details = details && typeof details === 'object' ? details : null;
+  maintenanceState.triggeredAt = new Date().toISOString();
+  console.error(`[maintenance] active: ${maintenanceState.reason}`, maintenanceState.details || '');
+  broadcastMaintenanceUpdate();
+  return maintenanceView();
+}
+
+function clearMaintenance() {
+  for (const session of walletSessions.values()) {
+    if (session && session.round && session.round.active) {
+      session.round.active = false;
+      session.round = null;
+      session.event = null;
+    }
+  }
+  maintenanceState.active = false;
+  maintenanceState.reason = '';
+  maintenanceState.details = null;
+  maintenanceState.triggeredAt = null;
+  broadcastMaintenanceUpdate();
+  return maintenanceView();
+}
+
+function maintenanceJson(res) {
+  return json(res, 503, {
+    ok: false,
+    code: 'ERR_MAINTENANCE',
+    error: 'Oyun bakim modunda',
+    message: 'Oyun gecici olarak bakim modunda. Lutfen daha sonra tekrar deneyin.',
+    maintenance: maintenanceView(),
+  });
+}
+
+function serveMaintenancePage(res) {
+  const state = maintenanceView();
+  res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(`<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bakim Modu</title><style>html,body{height:100%;margin:0;background:radial-gradient(circle at 50% 0%,#2b174d,#07040f 70%);color:#fff;font:15px/1.5 system-ui,-apple-system,sans-serif}.wrap{min-height:100%;display:grid;place-items:center;padding:24px}.card{width:min(520px,92vw);border:1px solid rgba(255,255,255,.16);border-radius:24px;background:rgba(12,7,28,.84);box-shadow:0 24px 80px rgba(0,0,0,.45);padding:28px;text-align:center}.badge{display:inline-block;border:1px solid rgba(255,209,102,.35);border-radius:999px;color:#ffd166;padding:5px 12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;font-size:12px}h1{margin:16px 0 8px;font-size:30px}p{margin:8px 0;color:#cfc4ee}.reason{margin-top:16px;color:#ffb3c7;font-size:13px}.time{color:#8f84b8;font-size:12px}</style></head><body><main class="wrap"><section class="card"><span class="badge">Bakim Modu</span><h1>Oyun gecici olarak durduruldu</h1><p>Bir takilma veya teknik sorun algilandi. Oyunculari korumak icin oyun otomatik olarak bakim moduna alindi.</p><p>Lutfen biraz sonra tekrar deneyin.</p><div class="reason">Sebep: ${escapeHtml(state.reason || 'otomatik kontrol')}</div><div class="time">${escapeHtml(state.triggeredAt || '')}</div></section></main></body></html>`);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 function providedClientSecret(req, requestUrl) {
   return String(req.headers['x-client-render-secret'] || requestUrl.searchParams.get('clientSecret') || '');
 }
@@ -313,6 +377,12 @@ function handleClientGameRoute(url, req, res) {
   }
 
   if (req.method === 'GET' && url === '/client/start') {
+    checkStaleWalletRounds();
+    if (maintenanceState.active) {
+      serveMaintenancePage(res);
+      return true;
+    }
+
     const requestedSessionID = normalizeSessionID(requestUrl.searchParams.get('sessionID'));
     const shellSession = getClientShellSession(req);
     const shellAuthorized = shellSession && shellSession.sessionID === requestedSessionID;
@@ -348,6 +418,12 @@ function handleClientGameRoute(url, req, res) {
   }
 
   if (req.method === 'GET' && url.startsWith('/client-game/sugar-rush/')) {
+    checkStaleWalletRounds();
+    if (maintenanceState.active) {
+      serveMaintenancePage(res);
+      return true;
+    }
+
     const session = getClientGameSession(req);
     if (!session || session.game !== 'sugar-rush') {
       res.writeHead(403, { 'Cache-Control': 'no-store' });
@@ -389,6 +465,8 @@ const server = http.createServer((req, res) => {
     setWalletBalance: (id, amount) => { adjustDisplayBalance(id, amount - displayBalance(id)); },
     listWallets: () => [...walletSessions.keys()],
     listCloudSessions,
+    getMaintenanceState: () => maintenanceView(),
+    clearMaintenance,
     onConfigSaved: () => broadcastConfigUpdate(),
     onPlayersChanged: () => broadcastPlayersUpdate(),
   })) {
@@ -432,6 +510,11 @@ const server = http.createServer((req, res) => {
   // Game routes: serve directly to all clients (no cloud redirect)
   // Cloud streaming remains available at /cloud/* for legacy clients
   if (url === '/sugar-rush' || url === '/sugar-rush/' || url.startsWith('/sugar-rush/')) {
+    checkStaleWalletRounds();
+    if (maintenanceState.active) {
+      return serveMaintenancePage(res);
+    }
+
     if (url === '/sugar-rush') {
       const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
       res.writeHead(302, { Location: `/sugar-rush/${query}` });
@@ -555,8 +638,18 @@ function readJson(req, cb) {
 }
 
 function handlePublicApiRoute(url, req, res) {
-  const routes = new Set(['/api/register', '/api/login', '/api/logout', '/api/session']);
+  const routes = new Set(['/api/register', '/api/login', '/api/logout', '/api/session', '/api/maintenance']);
   if (!routes.has(url)) return false;
+
+  if (url === '/api/maintenance' && req.method === 'GET') {
+    checkStaleWalletRounds();
+    json(res, 200, { ok: true, maintenance: maintenanceView() });
+    return true;
+  }
+  if (url === '/api/maintenance') {
+    json(res, 405, { ok: false, error: 'Method not allowed' });
+    return true;
+  }
 
   if (url === '/api/session' && req.method === 'GET') {
     const player = getAuthPlayer(req);
@@ -614,6 +707,26 @@ const walletSessions = new Map(); // sessionID -> { balance, round, event }
 let sugarBooks = null;
 const MAX_SINGLE_SUGAR_FS_AWARD = 34;
 
+function checkStaleWalletRounds() {
+  if (maintenanceState.active) return true;
+  const now = Date.now();
+  for (const [sessionID, session] of walletSessions.entries()) {
+    const round = session && session.round;
+    if (!round || !round.active) continue;
+    const lastProgressAt = Number(round.lastProgressAt || round.startedAt || round.betID || 0);
+    if (!Number.isFinite(lastProgressAt) || now - lastProgressAt <= AUTO_MAINTENANCE_STUCK_ROUND_MS) continue;
+    enterMaintenance('stuck-round', {
+      sessionID,
+      betID: round.betID,
+      lastEvent: round.event || session.event || null,
+      eventCount: Array.isArray(round.state) ? round.state.length : 0,
+      idleMs: now - lastProgressAt,
+    });
+    return true;
+  }
+  return false;
+}
+
 function isUsableSugarBook(book) {
   // Older book exports wrote cumulative free-spin totals into retrigger events.
   // A single Sugar Rush trigger cannot award more than the super-mode 7-scatter cap.
@@ -667,6 +780,9 @@ function loadSugarBooks() {
     sugarBooks = loadedBooks.filter(isUsableSugarBook);
     const rejected = loadedBooks.length - sugarBooks.length;
     console.log(`Loaded ${sugarBooks.length} Sugar Rush server-side books${rejected ? ` (${rejected} malformed free-spin books skipped)` : ''}`);
+    if (loadedBooks.length > 0 && sugarBooks.length === 0) {
+      enterMaintenance('sugar-books-invalid', { loadedBooks: loadedBooks.length, rejected });
+    }
   } catch (err) {
     console.warn(`Could not load Sugar Rush books (${err.message}); using fallback generator`);
     sugarBooks = [];
@@ -710,6 +826,12 @@ function handleWalletRoute(url, req, res) {
   const routes = new Set(['/wallet/authenticate', '/wallet/balance', '/wallet/play', '/wallet/end-round', '/bet/event']);
   if (!routes.has(url)) return false;
 
+  checkStaleWalletRounds();
+  if (maintenanceState.active && url !== '/wallet/end-round') {
+    maintenanceJson(res);
+    return true;
+  }
+
   const clientGameSession = getClientGameSession(req);
   if (!isInternalGameRequest(req) && !clientGameSession) {
     json(res, 403, { code: 'ERR_FORBIDDEN', message: 'Authorized game session required' });
@@ -727,7 +849,8 @@ function handleWalletRoute(url, req, res) {
     const sessionID = clientGameSession ? clientGameSession.sessionID : normalizeSessionID(requestedSessionID);
     const session = getWalletSession(sessionID);
 
-    switch (url) {
+    try {
+      switch (url) {
       case '/wallet/authenticate':
         return json(res, 200, {
           balance: { amount: session.balance, currency: 'USD' },
@@ -760,6 +883,8 @@ function handleWalletRoute(url, req, res) {
           amount,
           active: true,
           state: events,
+          startedAt: Date.now(),
+          lastProgressAt: Date.now(),
         };
         session.event = null;
 
@@ -779,8 +904,19 @@ function handleWalletRoute(url, req, res) {
 
       case '/bet/event':
         session.event = String(body.event ?? '');
-        if (session.round) session.round.event = session.event;
+        if (session.round) {
+          session.round.event = session.event;
+          session.round.lastProgressAt = Date.now();
+        }
         return json(res, 200, { event: session.event });
+      }
+    } catch (err) {
+      enterMaintenance('wallet-route-error', {
+        route: url,
+        sessionID,
+        message: err.message,
+      });
+      return maintenanceJson(res);
     }
   });
 
@@ -921,6 +1057,13 @@ function broadcastConfigUpdate() {
   }
 }
 
+function broadcastMaintenanceUpdate() {
+  const msg = JSON.stringify({ type: 'maintenance:updated', maintenance: maintenanceView(), ts: Date.now() });
+  for (const [client] of wsSessions.entries()) {
+    if (client.readyState === 1) client.send(msg);
+  }
+}
+
 wss.on('connection', (ws, req) => {
   // External clients (e.g. the Unity lobby) get a read-only balance feed;
   // only the internal cloud-stream browser may mutate wallet state.
@@ -931,10 +1074,12 @@ wss.on('connection', (ws, req) => {
 
   if (channel === 'admin') {
     ws.send(JSON.stringify({ type: 'connected', channel: 'admin' }));
+    ws.send(JSON.stringify({ type: 'maintenance:updated', maintenance: maintenanceView(), ts: Date.now() }));
   } else {
     getWalletSession(sessionID);
     sendBalance(ws, sessionID, 'connected');
     sendBalance(ws, sessionID);
+    ws.send(JSON.stringify({ type: 'maintenance:updated', maintenance: maintenanceView(), ts: Date.now() }));
   }
 
   ws.on('message', (raw) => {
@@ -1019,6 +1164,8 @@ wss.on('connection', (ws, req) => {
     wsSessions.delete(ws);
   });
 });
+
+setInterval(checkStaleWalletRounds, Math.min(30_000, AUTO_MAINTENANCE_STUCK_ROUND_MS)).unref();
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on http://0.0.0.0:${PORT}`);

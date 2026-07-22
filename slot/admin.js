@@ -580,12 +580,22 @@ function handleAdminRoute(req, res, ctx) {
       return json(res, 200, { ok: true, config: slotConfig.get() });
     }
 
+    if (req.method === 'GET' && pathname === '/admin/api/maintenance') {
+      return json(res, 200, { ok: true, maintenance: typeof ctx.getMaintenanceState === 'function' ? ctx.getMaintenanceState() : null });
+    }
+
+    if (req.method === 'POST' && pathname === '/admin/api/maintenance/clear') {
+      const maintenance = typeof ctx.clearMaintenance === 'function' ? ctx.clearMaintenance() : null;
+      return json(res, 200, { ok: true, maintenance });
+    }
+
     // ── Durum ──
 
     if (req.method === 'GET' && pathname === '/admin/api/status') {
       return json(res, 200, {
         ok: true,
         uptimeSeconds: Math.floor(process.uptime()),
+        maintenance: typeof ctx.getMaintenanceState === 'function' ? ctx.getMaintenanceState() : null,
         wallets: ctx.listWallets().map(id => ({ id, balance: ctx.getWalletBalance(id), registered: !!players[id] })),
         cloudSessions: ctx.listCloudSessions(),
       });
