@@ -640,6 +640,23 @@ function handleAdminRoute(req, res, ctx) {
       return json(res, 200, { ok: true, config: slotConfig.get() });
     }
 
+    // ── Sugar Rush Free Spin Limitleri ──
+
+    if (req.method === 'GET' && pathname === '/admin/api/sugar-fs-limits') {
+      const limits = typeof ctx.getSugarFreeSpinLimits === 'function' ? ctx.getSugarFreeSpinLimits() : null;
+      return json(res, 200, { ok: true, limits });
+    }
+
+    if (req.method === 'PUT' && pathname === '/admin/api/sugar-fs-limits') {
+      const body = await readJsonBody(req);
+      const partial = body.limits;
+      if (!partial || typeof partial !== 'object') {
+        return json(res, 400, { ok: false, error: 'limits alani gerekli' });
+      }
+      const limits = typeof ctx.setSugarFreeSpinLimits === 'function' ? ctx.setSugarFreeSpinLimits(partial) : null;
+      return json(res, 200, { ok: true, limits });
+    }
+
     if (req.method === 'GET' && pathname === '/admin/api/maintenance') {
       const game = requestUrl.searchParams.get('game') || undefined;
       return json(res, 200, { ok: true, maintenance: typeof ctx.getMaintenanceState === 'function' ? ctx.getMaintenanceState(game) : null });

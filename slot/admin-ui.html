@@ -264,6 +264,19 @@
       <tbody id="rtpSymbolBody"></tbody>
     </table>
     <p class="muted" style="margin-top:8px">Değişiklikler kaydedildikten sonra bir sonraki spin'de geçerli olur.</p>
+
+    <h2 style="margin-top:20px">Sugar Rush Free Spin Limitleri</h2>
+    <div class="row">
+      <button class="act gold" id="fsLimitSave">Kaydet</button>
+      <button class="act" id="fsLimitReload">Yeniden Yükle</button>
+    </div>
+    <fieldset style="margin-top:8px">
+      <legend>Sınır Değerleri</legend>
+      <div class="row"><label style="min-width:200px">Maks. Tekil FS Ödülü</label><input type="number" id="fsMaxSingle" min="4" max="100" style="width:80px"> <span class="muted">(tek scatter tetiklemesi başına max free spin, varsayılan: 34)</span></div>
+      <div class="row"><label style="min-width:200px">Maks. Toplam FS Ödülü</label><input type="number" id="fsMaxTotal" min="40" max="500" style="width:80px"> <span class="muted">(tüm tetiklemelerde toplam max FS, aşarsa bakım modu, varsayılan: 100)</span></div>
+      <div class="row"><label style="min-width:200px">Maks. FS Tetikleme Sayısı</label><input type="number" id="fsMaxTriggers" min="5" max="100" style="width:80px"> <span class="muted">(max FS tetikleme adedi, aşarsa bakım modu, varsayılan: 25)</span></div>
+    </fieldset>
+    <p class="muted" style="margin-top:8px">Değişiklikler anında uygulanır, sunucu restart gerektirmez.</p>
   </section>
 
   <!-- Durum -->
@@ -442,7 +455,7 @@ document.querySelectorAll('nav button').forEach(btn => btn.onclick = () => {
   if (btn.dataset.tab === 'players') loadPlayers();
   if (btn.dataset.tab === 'files') loadFiles();
   if (btn.dataset.tab === 'map') loadConfig();
-  if (btn.dataset.tab === 'rtp') loadSlotConfig();
+  if (btn.dataset.tab === 'rtp') { loadSlotConfig(); loadFsLimits(); }
   if (btn.dataset.tab === 'status') loadStatus();
 });
 
@@ -2823,6 +2836,34 @@ $('#rtpReset').onclick = async () => {
   toast('Varsayilan konfigurasyona donuldu');
   loadSlotConfig();
 };
+
+// ── Sugar Rush Free Spin Limitleri ──
+async function loadFsLimits() {
+  try {
+    const { limits } = await api('/admin/api/sugar-fs-limits');
+    if (!limits) return;
+    $('#fsMaxSingle').value = limits.maxSingleAward ?? 34;
+    $('#fsMaxTotal').value = limits.maxTotalAward ?? 100;
+    $('#fsMaxTriggers').value = limits.maxTriggers ?? 25;
+  } catch (e) { console.warn('[fs-limits] yukleme hatasi:', e); }
+}
+
+async function saveFsLimits() {
+  const limits = {
+    maxSingleAward: parseInt($('#fsMaxSingle').value) || 34,
+    maxTotalAward: parseInt($('#fsMaxTotal').value) || 100,
+    maxTriggers: parseInt($('#fsMaxTriggers').value) || 25,
+  };
+  await api('/admin/api/sugar-fs-limits', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ limits }),
+  });
+  toast('Free spin limitleri kaydedildi — aninda gecerli');
+  loadFsLimits();
+}
+
+$('#fsLimitSave').onclick = saveFsLimits;
+$('#fsLimitReload').onclick = loadFsLimits;
 
 // ── Durum ──
 async function loadStatus() {

@@ -34,9 +34,9 @@ const CLIENT_GAME_COOKIE = 'casinoClientGame';
 const CLIENT_SHELL_COOKIE = 'casinoClientShell';
 const AUTH_COOKIE = 'casinoAuth';
 const AUTH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const AUTO_MAINTENANCE_STUCK_ROUND_MS = Math.max(30_000, Number(process.env.AUTO_MAINTENANCE_STUCK_ROUND_MS) || 120_000);
-const AUTO_MAINTENANCE_MAX_SUGAR_FS_AWARD = Math.max(40, Number(process.env.AUTO_MAINTENANCE_MAX_SUGAR_FS_AWARD) || 100);
-const AUTO_MAINTENANCE_MAX_SUGAR_FS_TRIGGERS = Math.max(5, Number(process.env.AUTO_MAINTENANCE_MAX_SUGAR_FS_TRIGGERS) || 25);
+let AUTO_MAINTENANCE_STUCK_ROUND_MS = Math.max(30_000, Number(process.env.AUTO_MAINTENANCE_STUCK_ROUND_MS) || 120_000);
+let AUTO_MAINTENANCE_MAX_SUGAR_FS_AWARD = Math.max(40, Number(process.env.AUTO_MAINTENANCE_MAX_SUGAR_FS_AWARD) || 100);
+let AUTO_MAINTENANCE_MAX_SUGAR_FS_TRIGGERS = Math.max(5, Number(process.env.AUTO_MAINTENANCE_MAX_SUGAR_FS_TRIGGERS) || 25);
 const clientGameSessions = new Map(); // token -> { game, sessionID, expiresAt, lastAccess }
 const clientShellSessions = new Map(); // token -> { sessionID, expiresAt, lastAccess }
 const authSessions = new Map(); // token -> { playerId, expiresAt, lastAccess }
@@ -530,6 +530,8 @@ const server = http.createServer((req, res) => {
     listCloudSessions,
     getMaintenanceState: (game) => maintenanceView(game),
     clearMaintenance,
+    getSugarFreeSpinLimits,
+    setSugarFreeSpinLimits,
     onConfigSaved: () => broadcastConfigUpdate(),
     onPlayersChanged: () => broadcastPlayersUpdate(),
   })) {
@@ -780,7 +782,31 @@ function handlePublicApiRoute(url, req, res) {
 
 const walletSessions = new Map(); // sessionID -> { balance, round, event }
 let sugarBooks = null;
-const MAX_SINGLE_SUGAR_FS_AWARD = 34;
+let MAX_SINGLE_SUGAR_FS_AWARD = 34;
+
+function getSugarFreeSpinLimits() {
+  return {
+    maxSingleAward: MAX_SINGLE_SUGAR_FS_AWARD,
+    maxTotalAward: AUTO_MAINTENANCE_MAX_SUGAR_FS_AWARD,
+    maxTriggers: AUTO_MAINTENANCE_MAX_SUGAR_FS_TRIGGERS,
+  };
+}
+
+function setSugarFreeSpinLimits(limits) {
+  if (limits.maxSingleAward != null) {
+    const v = Number(limits.maxSingleAward);
+    if (Number.isFinite(v) && v >= 4) MAX_SINGLE_SUGAR_FS_AWARD = Math.floor(v);
+  }
+  if (limits.maxTotalAward != null) {
+    const v = Number(limits.maxTotalAward);
+    if (Number.isFinite(v) && v >= 40) AUTO_MAINTENANCE_MAX_SUGAR_FS_AWARD = Math.floor(v);
+  }
+  if (limits.maxTriggers != null) {
+    const v = Number(limits.maxTriggers);
+    if (Number.isFinite(v) && v >= 5) AUTO_MAINTENANCE_MAX_SUGAR_FS_TRIGGERS = Math.floor(v);
+  }
+  return getSugarFreeSpinLimits();
+}
 
 function checkStaleWalletRounds() {
   if (isMaintenanceActive('sugar-rush')) return true;
