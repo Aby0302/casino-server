@@ -34,6 +34,8 @@ const UI_GOLD := Color(1.0, 0.710, 0.230, 1.0)
 const UI_PINK := Color(0.980, 0.180, 0.470, 1.0)
 const UI_CYAN := Color(0.250, 0.850, 1.0, 1.0)
 const TELEPORT_COOLDOWN_MS := 1200
+const JPEG_START := PackedByteArray([0xFF, 0xD8])
+const JPEG_END := PackedByteArray([0xFF, 0xD9])
 
 var config_request: HTTPRequest
 var map_request: HTTPRequest
@@ -113,10 +115,21 @@ var _loaded_machine_count := 0
 var _game_started := false
 var hot_reload_file: FileAccess
 
+# 2D/3D view mode
+var _view_mode := "auto"  # "auto", "2d", "3d"
+var _lobby_2d_layer: CanvasLayer
+var _machine_card_container: Container
+var _view_mode_btn: Button
+var _machine_cards: Array = []
+var _active_game_texture_rect: TextureRect
+var _active_game_panel: PanelContainer
+var _2d_cloud_stream_active := false
+
 
 func _ready() -> void:
     _load_player_profile()
     _setup_mobile_controls()
+    _detect_view_mode()
 
     var hot_reload_file := FileAccess.open("user://.hotreload", FileAccess.READ)
     var has_hot_reload := hot_reload_file != null
@@ -146,7 +159,7 @@ func _process(_delta: float) -> void:
     _poll_config_socket()
     if _screen_state == "game":
         _poll_balance_socket()
-        _poll_cloud_stream()
+        _read_cloud_stream()
 
 
 func _poll_config_socket() -> void:
@@ -194,7 +207,7 @@ func _poll_balance_socket() -> void:
 
 
 func _physics_process(delta: float) -> void:
-    if player_body == null or _screen_state != "game":
+    if _view_mode == "2d" or player_body == null or _screen_state != "game":
         return
 
     var direction := _movement_direction()
@@ -699,6 +712,13 @@ func _show_auth_screen() -> void:
     _style_label(logo_sub, 22, UI_TEXT)
     box.add_child(logo_sub)
 
+    var view_mode_label := Label.new()
+    var mode_text := "2D (Hizli)" if _view_mode == "2d" else "3D (Immersive)"
+    view_mode_label.text = "Gorunum: %s" % mode_text
+    view_mode_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    _style_label(view_mode_label, 11, UI_MUTED)
+    box.add_child(view_mode_label)
+
     var divider := HSeparator.new()
     divider.modulate = Color(UI_GOLD.r, UI_GOLD.g, UI_GOLD.b, 0.2)
     box.add_child(divider)
@@ -863,7 +883,8 @@ func _on_auth_success() -> void:
 
 func _start_game_load() -> void:
     _update_loading_progress(0, "Oyun baslatiliyor...")
-    _build_base_scene()
+    if _view_mode == "3d":
+        _build_base_scene()
     _update_loading_progress(10, "Config yukleniyor...")
     _load_remote_config()
     _connect_config_socket()
@@ -876,7 +897,10 @@ func _complete_game_load() -> void:
     _update_loading_progress(95, "Oyun dunyasi kuruluyor...")
     _screen_state = "game"
     _hide_loading_screen()
-    _build_game_overlay()
+    if _view_mode == "3d":
+        _build_game_overlay()
+    else:
+        _build_lobby_2d()
     _refresh_player_ui()
     _refresh_machine_ui()
     _reconnect_balance_socket()
@@ -907,6 +931,23 @@ func _setup_mobile_controls() -> void:
 
 func _is_mobile() -> bool:
     return OS.get_name() in ["Android", "iOS"]
+
+
+func _detect_view_mode() -> void:
+    if _view_mode != "auto":
+        return
+    _view_mode = "2d" if _is_mobile() else "3d"
+    print("View mode: %s (mobile=%s)" % [_view_mode, _is_mobile()])
+
+
+func _set_view_mode(mode: String) -> void:
+    if mode == _view_mode:
+        return
+    _view_mode = mode
+    print("Switching to %s view" % _view_mode)
+    if _screen_state != "game":
+        return
+    _hot_reload_config()
 
 
 func _on_mobile_move(x: float, y: float) -> void:
@@ -947,6 +988,7 @@ func _hot_reload_config() -> void:
     _clear_teleports()
     map_collider_count = 0
     world_colliders_ready = false
+    _close_active_game_2d()
     if config_request != null:
         config_request.queue_free()
         config_request = null
@@ -967,11 +1009,13 @@ func _clear_machines() -> void:
     cloud_stream_requested = false
     _stop_cloud_stream()
     machine_collider_count = 0
+    _destroy_lobby_2d()
     for entry in machines:
         var node_val: Variant = entry.get("node")
         if node_val is Node:
             (node_val as Node).queue_free()
     machines.clear()
+    _machine_cards.clear()
     _refresh_machine_ui()
 
 
@@ -989,6 +1033,14 @@ func _on_config_response(result: int, response_code: int, _headers: PackedString
     if hot_reload_in_progress:
         var machines_value: Variant = config.get("machines", [])
         _hot_reload_target_machines = machines_value.size() if typeof(machines_value) == TYPE_ARRAY else 0
+
+    if _view_mode == "2d":
+        _apply_spawn(config)
+        _apply_teleports(config)
+        _update_loading_progress(30, "Config yuklendi, 2D lobby kuruluyor...")
+        _build_2d_machines(config.get("machines", []))
+        return
+
     _apply_spawn(config)
     _apply_teleports(config)
     _update_loading_progress(25, "Config yuklendi, harita yukleniyor...")
@@ -1411,6 +1463,325 @@ func _load_machine_from_path(machine: Dictionary, local_path: String) -> void:
         call_deferred("_start_machine_game", machines.size() - 1)
 
 
+# ── 2D Lobby ──
+
+func _build_2d_machines(machines_value: Variant) -> void:
+    if typeof(machines_value) != TYPE_ARRAY:
+        set_status("2D lobby: No machines in config.")
+        if _screen_state == "loading":
+            _complete_game_load()
+        return
+
+    var machine_list: Array = machines_value
+    _expected_machine_count = machine_list.size()
+    _loaded_machine_count = 0
+
+    for machine_value in machine_list:
+        if typeof(machine_value) != TYPE_DICTIONARY:
+            continue
+        var machine: Dictionary = machine_value
+        var machine_id := String(machine.get("id", "machine_%d" % _loaded_machine_count))
+        var game := String(machine.get("game", "slot"))
+        var model_name := String(machine.get("model", ""))
+
+        var entry := {
+            "id": machine_id,
+            "game": game,
+            "config": machine,
+            "node": null,
+            "screen_mesh_instance": null,
+            "screen_material": null,
+            "stream_image": Image.create(machine_screen_width, machine_screen_height, false, Image.FORMAT_RGB8),
+            "stream_texture": null,
+        }
+        machines.append(entry)
+        _loaded_machine_count += 1
+        var p := 30.0 + (float(_loaded_machine_count) / float(max(1, _expected_machine_count))) * 30.0
+        _update_loading_progress(p, "Makine: %s" % machine_id)
+
+    _build_lobby_2d()
+
+    if _screen_state == "loading":
+        _complete_game_load()
+
+
+func _destroy_lobby_2d() -> void:
+    _machine_cards.clear()
+    if _lobby_2d_layer != null and not _lobby_2d_layer.is_queued_for_deletion():
+        _lobby_2d_layer.queue_free()
+        _lobby_2d_layer = null
+
+
+func _build_lobby_2d() -> void:
+    _destroy_lobby_2d()
+
+    _lobby_2d_layer = CanvasLayer.new()
+    _lobby_2d_layer.name = "Lobby2D"
+    _lobby_2d_layer.layer = 5
+    add_child(_lobby_2d_layer)
+
+    var bg := ColorRect.new()
+    bg.name = "Lobby2DBg"
+    bg.color = Color(0.01, 0.005, 0.03, 1.0)
+    _set_control_full_rect(bg)
+    _lobby_2d_layer.add_child(bg)
+
+    var margin := MarginContainer.new()
+    margin.anchor_left = 0.0
+    margin.anchor_top = 0.0
+    margin.anchor_right = 1.0
+    margin.anchor_bottom = 1.0
+    margin.offset_left = 16.0
+    margin.offset_top = 16.0
+    margin.offset_right = -16.0
+    margin.offset_bottom = -16.0
+    _lobby_2d_layer.add_child(margin)
+
+    var vbox := VBoxContainer.new()
+    vbox.add_theme_constant_override("separation", 12)
+    margin.add_child(vbox)
+
+    var header := HBoxContainer.new()
+    header.add_theme_constant_override("separation", 10)
+    vbox.add_child(header)
+
+    var title := Label.new()
+    title.text = "RETAILERWAY CASINO"
+    _style_label(title, 22, UI_GOLD)
+    header.add_child(title)
+
+    header.add_spacer(true)
+
+    if _is_mobile():
+        _view_mode_btn = Button.new()
+        _view_mode_btn.text = "3D'ye Gec"
+        _view_mode_btn.pressed.connect(func() -> void: _set_view_mode("3d"))
+        _style_button(_view_mode_btn, UI_CYAN)
+        _view_mode_btn.custom_minimum_size.x = 120
+        header.add_child(_view_mode_btn)
+    else:
+        _view_mode_btn = Button.new()
+        _view_mode_btn.text = "2D Gorunum"
+        _view_mode_btn.pressed.connect(func() -> void: _set_view_mode("2d"))
+        _style_button(_view_mode_btn, UI_CYAN)
+        _view_mode_btn.custom_minimum_size.x = 120
+        header.add_child(_view_mode_btn)
+
+    var balance := Label.new()
+    balance.name = "BalanceLabel2D"
+    _style_label(balance, 14, UI_TEXT)
+    balance.text = "Bakiye: -"
+    header.add_child(balance)
+
+    if balance_label == null:
+        balance_label = balance
+
+    var scroll := ScrollContainer.new()
+    scroll.custom_minimum_size.y = 300
+    vbox.add_child(scroll)
+    vbox.set_v_size_flags(Control.SIZE_EXPAND_FILL)
+
+    var card_grid := GridContainer.new()
+    card_grid.name = "MachineCardGrid"
+    card_grid.columns = 2
+    card_grid.add_theme_constant_override("h_separation", 12)
+    card_grid.add_theme_constant_override("v_separation", 12)
+    card_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    card_grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    scroll.add_child(card_grid)
+    _machine_card_container = card_grid
+
+    for idx in machines.size():
+        var entry: Dictionary = machines[idx]
+        var card := _build_2d_machine_card(entry, idx)
+        card_grid.add_child(card)
+        _machine_cards.append(card)
+
+    _active_game_panel = PanelContainer.new()
+    _active_game_panel.name = "ActiveGamePanel2D"
+    _active_game_panel.visible = false
+    _active_game_panel.add_theme_stylebox_override("panel", _panel_style(
+        Color(0.030, 0.018, 0.055, 0.95),
+        Color(UI_CYAN.r, UI_CYAN.g, UI_CYAN.b, 0.3),
+        16, 12, 12.0
+    ))
+    vbox.add_child(_active_game_panel)
+
+    var game_vbox := VBoxContainer.new()
+    game_vbox.add_theme_constant_override("separation", 8)
+    _active_game_panel.add_child(game_vbox)
+
+    var game_header := HBoxContainer.new()
+    game_vbox.add_child(game_header)
+
+    var game_title := Label.new()
+    game_title.name = "ActiveGameTitle"
+    game_title.text = "Oyun"
+    _style_label(game_title, 16, UI_CYAN)
+    game_header.add_child(game_title)
+
+    game_header.add_spacer(true)
+
+    var close_btn := Button.new()
+    close_btn.text = "Kapat"
+    close_btn.pressed.connect(_close_active_game_2d)
+    _style_button(close_btn, UI_PINK)
+    game_header.add_child(close_btn)
+
+    var spin_btn := Button.new()
+    spin_btn.text = "SPIN"
+    spin_btn.pressed.connect(_spin_active_machine)
+    _style_button(spin_btn, UI_GOLD)
+    game_header.add_child(spin_btn)
+
+    _active_game_texture_rect = TextureRect.new()
+    _active_game_texture_rect.name = "ActiveGameTexture"
+    _active_game_texture_rect.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+    _active_game_texture_rect.custom_minimum_size.y = 200
+    _active_game_texture_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
+    _active_game_texture_rect.texture = null
+    game_vbox.add_child(_active_game_texture_rect)
+
+    _refresh_machine_ui()
+    set_status("2D lobby olusturuldu (%s makine)" % machines.size())
+
+
+func _build_2d_machine_card(entry: Dictionary, idx: int) -> PanelContainer:
+    var card := PanelContainer.new()
+    card.name = "Card_%s" % entry.get("id", "machine_%d" % idx)
+    card.custom_minimum_size = Vector2(280, 120)
+    card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    card.add_theme_stylebox_override("panel", _panel_style(
+        Color(0.045, 0.025, 0.075, 0.92),
+        Color(0.25, 0.15, 0.40, 0.4),
+        14, 10, 14.0
+    ))
+
+    var hbox := HBoxContainer.new()
+    hbox.add_theme_constant_override("separation", 14)
+    card.add_child(hbox)
+
+    var icon := ColorRect.new()
+    icon.custom_minimum_size = Vector2(80, 80)
+    icon.color = Color(0.12, 0.06, 0.20, 0.8)
+    _set_corner_radius(icon, 10)
+    hbox.add_child(icon)
+
+    var icon_label := Label.new()
+    icon_label.text = "🎰"
+    icon_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    icon_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    icon_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    icon_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    icon_label.add_theme_font_size_override("font_size", 32)
+    icon.add_child(icon_label)
+
+    var vbox := VBoxContainer.new()
+    vbox.add_theme_constant_override("separation", 4)
+    vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    hbox.add_child(vbox)
+
+    var name_label := Label.new()
+    name_label.text = String(entry.get("id", "Slot Makinesi"))
+    _style_label(name_label, 15, UI_TEXT)
+    vbox.add_child(name_label)
+
+    var game_label := Label.new()
+    game_label.text = String(entry.get("game", "slot"))
+    _style_label(game_label, 12, UI_MUTED)
+    vbox.add_child(game_label)
+
+    var status_label_2d := Label.new()
+    status_label_2d.name = "CardStatus"
+    status_label_2d.text = "DURAKLAMADA"
+    _style_label(status_label_2d, 11, UI_PINK)
+    vbox.add_child(status_label_2d)
+
+    var action_btn := Button.new()
+    action_btn.text = "OYUNU AC"
+    action_btn.custom_minimum_size.x = 100
+    action_btn.pressed.connect(_on_2d_machine_selected.bind(idx))
+    _style_button(action_btn, UI_GOLD)
+    vbox.add_child(action_btn)
+
+    return card
+
+
+func _on_2d_machine_selected(idx: int) -> void:
+    if idx < 0 or idx >= machines.size():
+        return
+    if not authenticated:
+        set_status("Oyun acmak icin once giris yap")
+        if auth_result_label != null:
+            auth_result_label.text = "Oyun acmak icin email/kullanici adi ile giris yap."
+        return
+    active_machine_index = idx
+    _start_machine_game(idx)
+
+    var card_container := _machine_card_container
+    if card_container != null:
+        for i in card_container.get_child_count():
+            var c := card_container.get_child(i)
+            if c is PanelContainer:
+                var style := _panel_style(
+                    Color(0.045, 0.025, 0.075, 0.92),
+                    Color(0.25, 0.15, 0.40, 0.4),
+                    14, 10, 14.0
+                )
+                c.add_theme_stylebox_override("panel", style)
+
+        if idx < card_container.get_child_count():
+            var selected := card_container.get_child(idx)
+            if selected is PanelContainer:
+                var sel_style := _panel_style(
+                    Color(0.060, 0.035, 0.095, 0.94),
+                    Color(UI_GOLD.r, UI_GOLD.g, UI_GOLD.b, 0.5),
+                    14, 12, 14.0
+                )
+                selected.add_theme_stylebox_override("panel", sel_style)
+
+
+func _set_active_game_texture_2d(texture: Texture2D) -> void:
+    if _active_game_texture_rect != null:
+        _active_game_texture_rect.texture = texture
+        if _active_game_panel != null and not _active_game_panel.visible:
+            _active_game_panel.visible = true
+
+
+func _close_active_game_2d() -> void:
+    _stop_cloud_stream()
+    cloud_stream_status = "inactive"
+    active_machine_index = -1
+    _2d_cloud_stream_active = false
+    if _active_game_texture_rect != null:
+        _active_game_texture_rect.texture = null
+    if _active_game_panel != null:
+        _active_game_panel.visible = false
+
+
+func _set_corner_radius(rect: ColorRect, radius: int) -> void:
+    var theme := Theme.new()
+    var style := StyleBoxFlat.new()
+    style.bg_color = rect.color
+    style.set_corner_radius_all(radius)
+    theme.set_stylebox("panel", "PanelContainer", style)
+
+
+func _refresh_2d_balance() -> void:
+    for entry in machines:
+        pass
+    set_status("Bakiye guncellendi")
+
+
+func _refresh_2d_machine_cards() -> void:
+    for idx in machines.size():
+        var entry: Dictionary = machines[idx]
+        if idx < _machine_cards.size():
+            var card := _machine_cards[idx] as PanelContainer
+            if card == null:
+                continue
+
+
 func _load_gltf(path: String) -> Node:
     var document := GLTFDocument.new()
     var state := GLTFState.new()
@@ -1805,6 +2176,144 @@ func _start_machine_game(machine_index: int, spin_when_ready: bool = false) -> v
         set_status("Cloud stream request failed: %s" % error_string(err))
 
 
+func _on_cloud_start_response(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+    if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
+        cloud_stream_status = "inactive"
+        _set_active_screen_status("Cloud stream start failed")
+        set_status("Cloud stream start failed: result=%s code=%s" % [result, response_code])
+        return
+
+    var parsed: Variant = JSON.parse_string(body.get_string_from_utf8())
+    if typeof(parsed) != TYPE_DICTIONARY:
+        cloud_stream_status = "inactive"
+        return
+    var data: Dictionary = parsed
+    if not data.get("ok", false):
+        cloud_stream_status = "inactive"
+        return
+
+    cloud_id = String(data.get("id", ""))
+    cloud_token = String(data.get("token", ""))
+    cloud_stream_frame_count = 0
+    cloud_stream_buffer.clear()
+
+    if cloud_stream_client != null:
+        cloud_stream_client.close()
+    cloud_stream_client = HTTPClient.new()
+    var base := _base_url()
+    var parsed_url := _parse_url(base)
+    var host := parsed_url.get("host", "casino.retailerway.com")
+    var port_val := parsed_url.get("port", 443)
+    var use_ssl := parsed_url.get("ssl", true)
+    var err := cloud_stream_client.connect_to_host(host, port_val, use_ssl)
+    if err != OK:
+        cloud_stream_status = "inactive"
+        set_status("Cloud frame HTTPClient connect failed: %s" % error_string(err))
+        return
+
+    cloud_stream_requested = false
+    cloud_stream_started = true
+    cloud_stream_status = "streaming"
+    set_status("Cloud stream basladi | ID: %s" % cloud_id)
+    _set_active_screen_status("Cloud stream baslatildi, kare bekleniyor...")
+
+
+func _parse_url(url: String) -> Dictionary:
+    var result := { "host": "casino.retailerway.com", "port": 443, "ssl": true }
+    var s := url
+    if s.begins_with("https://"):
+        result.ssl = true
+        s = s.trim_prefix("https://")
+    elif s.begins_with("http://"):
+        result.ssl = false
+        s = s.trim_prefix("http://")
+    var slash_idx := s.find("/")
+    if slash_idx >= 0:
+        s = s.substr(0, slash_idx)
+    var colon_idx := s.find(":")
+    if colon_idx >= 0:
+        result.host = s.substr(0, colon_idx)
+        result.port = int(s.substr(colon_idx + 1))
+    else:
+        result.host = s
+        result.port = 443 if result.ssl else 80
+    return result
+
+
+func _read_cloud_stream() -> void:
+    if not cloud_stream_started or cloud_stream_client == null:
+        return
+    cloud_stream_client.poll()
+    var status := cloud_stream_client.get_status()
+    if status == HTTPClient.STATUS_DISCONNECTED or status == HTTPClient.STATUS_CONNECTION_ERROR:
+        cloud_stream_started = false
+        cloud_stream_status = "inactive"
+        set_status("Cloud stream baglantisi koptu")
+        return
+    if status == HTTPClient.STATUS_CONNECTING or status == HTTPClient.STATUS_RESOLVING:
+        return
+    if not cloud_stream_requested:
+        cloud_stream_requested = true
+        var path := "/cloud/frame?id=%s&token=%s" % [cloud_id.uri_encode(), cloud_token.uri_encode()]
+        var headers := PackedStringArray(["Connection: keep-alive"])
+        var err := cloud_stream_client.request(HTTPClient.METHOD_GET, path, headers)
+        if err != OK:
+            cloud_stream_started = false
+            cloud_stream_status = "inactive"
+            set_status("Cloud frame request failed: %s" % error_string(err))
+        return
+    if cloud_stream_client.get_status() != HTTPClient.STATUS_BODY:
+        return
+    var bytes := cloud_stream_client.read_response_body_chunk()
+    if bytes.size() > 0:
+        cloud_stream_buffer.append_array(bytes)
+        _try_parse_cloud_frame()
+
+
+func _try_parse_cloud_frame() -> void:
+    var jpeg_start := _find_bytes(cloud_stream_buffer, JPEG_START, 0)
+    if jpeg_start < 0:
+        return
+    var jpeg_end := _find_bytes(cloud_stream_buffer, JPEG_END, jpeg_start)
+    if jpeg_end < 0:
+        return
+    var jpeg_data := cloud_stream_buffer.slice(jpeg_start, jpeg_end + 2)
+    cloud_stream_buffer = cloud_stream_buffer.slice(jpeg_end + 2)
+    _show_cloud_frame(jpeg_data)
+
+
+func _show_cloud_frame(jpeg_data: PackedByteArray) -> void:
+    var image := Image.new()
+    var err := image.load_jpg_from_buffer(jpeg_data)
+    if err != OK:
+        push_warning("Cloud frame JPEG decode failed: %s" % error_string(err))
+        return
+
+    var texture := ImageTexture.create_from_image(image)
+    if texture == null:
+        return
+
+    if _view_mode == "2d":
+        _set_active_game_texture_2d(texture)
+    else:
+        var entry: Dictionary = machines[active_machine_index] if active_machine_index >= 0 and active_machine_index < machines.size() else {}
+        if entry.is_empty():
+            return
+        var mat_val: Variant = entry.get("screen_material")
+        if mat_val is BaseMaterial3D:
+            (mat_val as BaseMaterial3D).albedo_color = Color.WHITE
+            (mat_val as BaseMaterial3D).albedo_texture = texture
+
+    cloud_stream_frame_count += 1
+    if cloud_stream_frame_count == 1 or cloud_stream_frame_count % 30 == 0:
+        print("Cloud stream frame displayed: %s" % cloud_stream_frame_count)
+        set_status("Kare: %s | Space: spin" % cloud_stream_frame_count)
+
+    if pending_spin_after_stream and cloud_stream_frame_count == 1:
+        pending_spin_after_stream = false
+        _spin_active_machine()
+
+
 func _start_client_render(entry: Dictionary, game: String) -> bool:
     if not ClassDB.class_exists("CefTexture2D"):
         return false
@@ -1828,431 +2337,15 @@ func _start_client_render(entry: Dictionary, game: String) -> bool:
     var mat_val: Variant = entry.get("screen_material")
     if mat_val is BaseMaterial3D:
         (mat_val as BaseMaterial3D).albedo_color = Color.WHITE
-        (mat_val as BaseMaterial3D).albedo_texture = texture_obj as Texture2D
-
-    entry["client_render_active"] = true
-    entry["client_render_texture"] = texture_obj
-    entry["client_render_url"] = launch_url
-
-    cloud_id = ""
-    cloud_token = ""
-    cloud_stream_status = "client-render"
-    _set_machine_screen_status(entry, "Client-side CEF renderer active")
-    set_status("Client-side CEF renderer active: %s" % game)
-
-    if pending_spin_after_stream:
-        pending_spin_after_stream = false
-        _send_client_render_spin(default_bet)
-
-    return true
-
-
-func _client_render_start_url(game: String) -> String:
-    var url := "%s/client/start?game=%s&sessionID=%s" % [
-        _base_url(),
-        game.uri_encode(),
-        session_id.uri_encode(),
-    ]
-    var secret := _client_render_secret()
-    if not secret.is_empty():
-        url += "&clientSecret=%s" % secret.uri_encode()
-    return url
-
-
-func _client_render_secret() -> String:
-    var env_secret := OS.get_environment("CASINO_CLIENT_RENDER_SECRET").strip_edges()
-    if not env_secret.is_empty():
-        return env_secret
-
-    for arg in OS.get_cmdline_user_args():
-        if arg.begins_with("--client-render-secret="):
-            return arg.substr("--client-render-secret=".length()).strip_edges()
-
-    return client_render_secret.strip_edges()
-
-
-func _client_render_accelerated_osr() -> bool:
-    var enabled := _parse_bool(OS.get_environment("CASINO_CEF_ACCELERATED"), enable_client_render_accelerated_osr)
-    for arg in OS.get_cmdline_user_args():
-        if arg.begins_with("--cef-accelerated="):
-            enabled = _parse_bool(arg.substr("--cef-accelerated=".length()), enabled)
-    return enabled
-
-
-func _parse_bool(value: String, fallback: bool) -> bool:
-    var clean := value.strip_edges().to_lower()
-    if clean in ["1", "true", "yes", "on"]:
-        return true
-    if clean in ["0", "false", "no", "off"]:
-        return false
-    return fallback
-
-
-func _client_render_preload_script() -> String:
-    return """
-(function () {
-  if (window.__casinoGodotBridgeInstalled) return;
-  window.__casinoGodotBridgeInstalled = true;
-  window.__casinoGodotPendingSpinBet = 0;
-
-  function triggerSpin(bet) {
-    var nextBet = Number(bet) || 100;
-    var scene = window.__sugarBlastGameScene;
-    if (!scene) {
-      window.__casinoGodotPendingSpinBet = nextBet;
-      startGameFromBridge();
-      return false;
-    }
-    dismissIntro(scene);
-    if (scene._spinLock) {
-      window.__casinoGodotPendingSpinBet = nextBet;
-      return false;
-    }
-    var spinHit = scene.spinControls && scene.spinControls.spinHit;
-    if (spinHit && typeof spinHit.emit === 'function') {
-      spinHit.emit('pointerdown');
-      return true;
-    }
-    window.dispatchEvent(new CustomEvent('unitySpin', { detail: { bet: nextBet } }));
-    return true;
-  }
-
-  function dismissIntro(scene) {
-    if (scene && scene.introSplash && typeof scene.introSplash.hide === 'function') {
-      scene.introSplash.hide();
-      return true;
-    }
-    return false;
-  }
-
-  function startGameFromBridge() {
-    if (typeof window.__sugarBlastStartGame !== 'function') return false;
-    try {
-      window.__sugarBlastStartGame();
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  function kickStart() {
-    var scene = window.__sugarBlastGameScene;
-    if (scene) {
-      dismissIntro(scene);
-      if (window.__casinoGodotPendingSpinBet) {
-        var pending = window.__casinoGodotPendingSpinBet;
-        window.__casinoGodotPendingSpinBet = 0;
-        triggerSpin(pending);
-      }
-      return true;
-    }
-
-    if (startGameFromBridge()) return false;
-
-    try {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true }));
-      var canvas = document.querySelector('canvas');
-      if (canvas && typeof PointerEvent !== 'undefined') {
-        var rect = canvas.getBoundingClientRect();
-        var x = rect.left + rect.width / 2;
-        var y = rect.top + rect.height * 0.72;
-        canvas.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: y, bubbles: true }));
-        canvas.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y, bubbles: true }));
-      }
-    } catch (_) {}
-    return false;
-  }
-
-  window.__casinoGodotSpin = triggerSpin;
-  window.onIpcMessage = function (message) {
-    try {
-      var payload = JSON.parse(message);
-      if (payload && payload.type === 'unitySpin') triggerSpin(payload.bet);
-    } catch (_) {}
-  };
-  if (window.ipcMessage && typeof window.ipcMessage.addListener === 'function') {
-    window.ipcMessage.addListener(window.onIpcMessage);
-  }
-
-  var tries = 0;
-  var timer = window.setInterval(function () {
-    tries += 1;
-    if (kickStart() || tries >= 24) window.clearInterval(timer);
-  }, 500);
-})();
-"""
-
-
-func _active_machine_uses_client_render() -> bool:
-    if active_machine_index < 0 or active_machine_index >= machines.size():
-        return false
-    return bool(machines[active_machine_index].get("client_render_active", false))
-
-
-func _active_client_render_texture() -> Object:
-    if active_machine_index < 0 or active_machine_index >= machines.size():
-        return null
-    var texture_val: Variant = machines[active_machine_index].get("client_render_texture")
-    if texture_val is Object:
-        return texture_val as Object
-    return null
-
-
-func _clear_machine_client_render(entry: Dictionary) -> void:
-    if not bool(entry.get("client_render_active", false)):
-        return
-
-    var texture_val: Variant = entry.get("client_render_texture")
-    var mat_val: Variant = entry.get("screen_material")
-    if mat_val is BaseMaterial3D and texture_val is Texture2D:
-        var material := mat_val as BaseMaterial3D
-        if material.albedo_texture == texture_val:
-            material.albedo_texture = null
-
-    entry["client_render_active"] = false
-    entry["client_render_texture"] = null
-    entry["client_render_url"] = ""
-
-
-func _send_client_render_spin(bet: int) -> bool:
-    var texture := _active_client_render_texture()
-    if texture == null:
-        return false
-
-    var sent := false
-    var payload := JSON.stringify({ "type": "unitySpin", "bet": bet })
-    if texture.has_method("send_ipc_message"):
-        texture.call("send_ipc_message", payload)
-        sent = true
-    if texture.has_method("eval"):
-        texture.call("eval", "if (window.__casinoGodotSpin) window.__casinoGodotSpin(%s);" % bet)
-        sent = true
-    return sent
-
-
-func _on_cloud_start_response(result: int, response_code: int, headers: PackedStringArray, _body: PackedByteArray) -> void:
-    if active_machine_index < 0 or active_machine_index >= machines.size():
-        return
-
-    var entry: Dictionary = machines[active_machine_index]
-    if response_code != 302 and response_code != 301:
-        pending_spin_after_stream = false
-        cloud_stream_status = "inactive"
-        _set_machine_screen_status(entry, "Cloud start failed: result=%s code=%s" % [result, response_code])
-        set_status("Cloud start failed: result=%s code=%s" % [result, response_code])
-        return
-
-    var location := _header_value(headers, "location")
-    var params := _query_params(location)
-    cloud_id = String(params.get("id", ""))
-    cloud_token = String(params.get("token", ""))
-
-    if cloud_id.is_empty() or cloud_token.is_empty():
-        pending_spin_after_stream = false
-        cloud_stream_status = "inactive"
-        _set_machine_screen_status(entry, "Cloud token missing")
-        set_status("Cloud token missing")
-        return
-
-    _set_machine_screen_status(entry, "Connecting video stream...")
-    _start_cloud_stream()
-
-
-func _start_cloud_stream() -> void:
-    cloud_stream_started = true
-    cloud_stream_requested = false
-    cloud_stream_buffer.clear()
-    cloud_stream_status = "connecting"
-    cloud_frame_error_count = 0
-    _set_active_screen_status("Waiting for first frame...")
-    _request_cloud_frame()
-
-
-func _request_cloud_frame() -> void:
-    if not cloud_stream_started or cloud_id.is_empty() or cloud_token.is_empty():
-        return
-    if cloud_stream_requested:
-        return
-
-    if cloud_frame_request != null:
-        cloud_frame_request.queue_free()
-
-    cloud_frame_request = HTTPRequest.new()
-    cloud_frame_request.name = "CloudFrameRequest"
-    cloud_frame_request.timeout = 20.0
-    add_child(cloud_frame_request)
-    cloud_frame_request.request_completed.connect(_on_cloud_frame_response.bind(cloud_frame_request))
-
-    var url := "%s/cloud/frame?id=%s&token=%s&width=%s&height=%s&t=%s" % [
-        _base_url(),
-        cloud_id.uri_encode(),
-        cloud_token.uri_encode(),
-        machine_screen_width,
-        machine_screen_height,
-        Time.get_ticks_msec(),
-    ]
-    var err := cloud_frame_request.request(url)
-    if err != OK:
-        cloud_frame_request.queue_free()
-        cloud_frame_request = null
-        pending_spin_after_stream = false
-        cloud_stream_status = "inactive"
-        _set_active_screen_status("Cloud frame request failed: %s" % error_string(err))
-        set_status("Cloud frame request failed: %s" % error_string(err))
-        return
-
-    cloud_stream_requested = true
-    cloud_stream_status = "streaming"
-
-
-func _on_cloud_frame_response(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray, request: HTTPRequest) -> void:
-    if request != null:
-        request.queue_free()
-    if request == cloud_frame_request:
-        cloud_frame_request = null
-    cloud_stream_requested = false
-
-    if not cloud_stream_started:
-        return
-
-    if result == HTTPRequest.RESULT_SUCCESS and response_code == 200 and body.size() > 0:
-        cloud_frame_error_count = 0
-        _show_cloud_frame(body)
-        _schedule_cloud_frame(0.2)
-        return
-
-    cloud_frame_error_count += 1
-    var message := "Cloud frame failed: result=%s code=%s bytes=%s" % [result, response_code, body.size()]
-    _set_active_screen_status(message)
-    set_status(message)
-
-    if response_code == 403 or response_code == 404 or cloud_frame_error_count >= 3:
-        pending_spin_after_stream = false
-        cloud_stream_status = "inactive"
-        _stop_cloud_stream()
-        return
-
-    _schedule_cloud_frame(1.0)
-
-
-func _schedule_cloud_frame(delay: float) -> void:
-    if not cloud_stream_started:
-        return
-    var tree := get_tree()
-    if tree == null:
-        return
-    var timer := tree.create_timer(delay)
-    timer.timeout.connect(func ():
-        if cloud_stream_started and not cloud_stream_requested:
-            _request_cloud_frame()
-    )
-
-
-func _poll_cloud_stream() -> void:
-    if not cloud_stream_started or cloud_stream_client == null:
-        return
-
-    cloud_stream_client.poll()
-    var status := cloud_stream_client.get_status()
-
-    if status == HTTPClient.STATUS_CONNECTED and not cloud_stream_requested:
-        var path := "/cloud/stream?id=%s&token=%s&width=%s&height=%s" % [
-            cloud_id.uri_encode(),
-            cloud_token.uri_encode(),
-            machine_screen_width,
-            machine_screen_height,
-        ]
-        var err := cloud_stream_client.request(HTTPClient.METHOD_GET, path, PackedStringArray())
-        if err != OK:
-            _set_active_screen_status("Cloud stream request failed: %s" % error_string(err))
-            _stop_cloud_stream()
-            return
-        cloud_stream_requested = true
-        cloud_stream_status = "streaming"
-        _set_active_screen_status("Waiting for first frame...")
-        return
-
-    if status == HTTPClient.STATUS_BODY:
-        var chunk := cloud_stream_client.read_response_body_chunk()
-        if chunk.size() > 0:
-            cloud_stream_buffer.append_array(chunk)
-            _extract_cloud_frames()
-        return
-
-    if status == HTTPClient.STATUS_DISCONNECTED and cloud_stream_requested:
-        _set_active_screen_status("Cloud stream disconnected")
-        _stop_cloud_stream()
-
-
-func _extract_cloud_frames() -> void:
-    var header_separator := PackedByteArray([13, 10, 13, 10])
-    while true:
-        var header_end := _find_bytes(cloud_stream_buffer, header_separator, 0)
-        if header_end < 0:
-            if cloud_stream_buffer.size() > 1024 * 1024:
-                cloud_stream_buffer = cloud_stream_buffer.slice(max(0, cloud_stream_buffer.size() - 4096))
-            return
-
-        var header_text := cloud_stream_buffer.slice(0, header_end).get_string_from_ascii()
-        var content_length := _content_length_from_header(header_text)
-        var frame_start := header_end + header_separator.size()
-        if content_length <= 0:
-            cloud_stream_buffer = cloud_stream_buffer.slice(frame_start)
-            continue
-
-        var frame_end := frame_start + content_length
-        if cloud_stream_buffer.size() < frame_end:
-            return
-
-        var frame := cloud_stream_buffer.slice(frame_start, frame_end)
-        var next_start := frame_end
-        if cloud_stream_buffer.size() >= next_start + 2 and cloud_stream_buffer[next_start] == 13 and cloud_stream_buffer[next_start + 1] == 10:
-            next_start += 2
-        cloud_stream_buffer = cloud_stream_buffer.slice(next_start)
-        _show_cloud_frame(frame)
-
-
-func _show_cloud_frame(frame: PackedByteArray) -> void:
-    if active_machine_index < 0 or active_machine_index >= machines.size():
-        return
-
-    var entry: Dictionary = machines[active_machine_index]
-
-    var image_val: Variant = entry.get("stream_image")
-    if not image_val is Image:
-        return
-    var image := image_val as Image
-    var err := image.load_jpg_from_buffer(frame)
-    if err != OK:
-        if cloud_stream_frame_count < 5:
-            print("Cloud frame JPEG decode failed: %s (bytes=%s)" % [error_string(err), frame.size()])
-        return
-
-    var tex_val: Variant = entry.get("stream_texture")
-    var texture: ImageTexture
-    if tex_val is ImageTexture:
-        texture = tex_val as ImageTexture
-        if image.get_width() == texture.get_width() and image.get_height() == texture.get_height():
-            texture.update(image)
-        else:
-            texture = ImageTexture.create_from_image(image)
-            entry["stream_texture"] = texture
-    else:
-        texture = ImageTexture.create_from_image(image)
-        entry["stream_texture"] = texture
-
-    var mat_val: Variant = entry.get("screen_material")
-    if mat_val is BaseMaterial3D:
-        (mat_val as BaseMaterial3D).albedo_color = Color.WHITE
         (mat_val as BaseMaterial3D).albedo_texture = texture
 
-    cloud_stream_frame_count += 1
+    if _view_mode == "2d" and texture_obj is Texture2D:
+        _set_active_game_texture_2d(texture_obj)
 
-    if cloud_stream_frame_count == 1 or cloud_stream_frame_count % 30 == 0:
-        print("Cloud stream frame displayed: %s (%sx%s JPEG)" % [cloud_stream_frame_count, image.get_width(), image.get_height()])
-        set_status("Sugar Rush yayinda | kare: %s | Space: spin" % cloud_stream_frame_count)
+    print("Client render started: %s" % launch_url)
+    set_status("Client render basladi | Space: spin")
 
-    if pending_spin_after_stream and cloud_stream_frame_count == 1:
+    if pending_spin_after_stream:
         pending_spin_after_stream = false
         _spin_active_machine()
 
@@ -2633,6 +2726,10 @@ func _refresh_player_ui() -> void:
 
 func _refresh_machine_ui() -> void:
     if machine_label == null:
+        return
+
+    if _view_mode == "2d":
+        machine_label.text = "Makineler: %s" % machines.size()
         return
 
     var nearby_text := "none"
