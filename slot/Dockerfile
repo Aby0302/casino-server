@@ -3,7 +3,8 @@ FROM node:20-slim
 WORKDIR /app
 
 # System dependencies for Playwright Chromium
-RUN apt-get update --allow-unauthenticated -o Acquire::AllowInsecureRepositories=true && apt-get install -y --no-install-recommends --allow-unauthenticated debian-archive-keyring && apt-get update && apt-get install -y --no-install-recommends \
+# This layer is cached as long as this RUN command doesn't change
+RUN apt-get update && apt-get install -y --no-install-recommends \
   ca-certificates \
   libnss3 \
   libnspr4 \
@@ -26,14 +27,13 @@ RUN apt-get update --allow-unauthenticated -o Acquire::AllowInsecureRepositories
   libx11-xcb1 \
   && rm -rf /var/lib/apt/lists/*
 
-# Copy package files first for layer caching
+# Copy package files first (changes rarely) for layer caching
 COPY package.json package-lock.json ./
 RUN npm ci --only=production && npx playwright install chromium
 
-# Copy source
+# Copy source last (changes most often)
 COPY . .
 
-# Data directory for player persistence
 RUN mkdir -p data
 
 EXPOSE 3001

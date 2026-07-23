@@ -1,7 +1,16 @@
 node_modules
 .git
+.gitignore
 data
 *.log
 *.bak
 Screenshot_*
 .env
+.env.example
+docker-compose.yml
+*.md
+godot-client
+docs
+mobile-shell
+test-*.html
+session-ses_*
