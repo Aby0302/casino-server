@@ -829,14 +829,20 @@ function checkStaleWalletRounds() {
 }
 
 function isUsableSugarBook(book) {
-  // Older book exports wrote cumulative free-spin totals into retrigger events.
-  // A single Sugar Rush trigger cannot award more than the super-mode 7-scatter cap.
   if (!Array.isArray(book && book.events)) return false;
-  return !book.events.some(event => {
+  // Reject books with individual triggers exceeding the per-trigger cap
+  const hasBadTrigger = book.events.some(event => {
     if (!event || event.type !== 'fsTrigger') return false;
     const totalSpins = Number(event.totalSpins);
     return !Number.isFinite(totalSpins) || totalSpins <= 0 || totalSpins > MAX_SINGLE_SUGAR_FS_AWARD;
   });
+  if (hasBadTrigger) return false;
+  // Reject books whose cumulative FS stats would trigger maintenance at runtime
+  const stats = sugarFreeSpinStats(book.events);
+  const maxObservedTotal = Math.max(stats.totalAwarded, stats.maxUpdateTotal, stats.freeGameReveals);
+  if (stats.triggerCount > AUTO_MAINTENANCE_MAX_SUGAR_FS_TRIGGERS) return false;
+  if (maxObservedTotal > AUTO_MAINTENANCE_MAX_SUGAR_FS_AWARD) return false;
+  return true;
 }
 
 function sugarFreeSpinStats(events) {
